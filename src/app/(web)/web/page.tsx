@@ -1,0 +1,27 @@
+import CustomerStories from "@/modules/web/CustomerStories";
+import Features from "@/modules/web/Features";
+import Hero from "@/modules/web/Hero";
+import InfraSection from "@/modules/web/infraSection";
+import Navbar from "@/modules/web/Navbar";
+import Section1 from "@/modules/web/Section1";
+import Section2 from "@/modules/web/Section2";
+import WallOfLove from "@/modules/web/WallOfLove";
+import WhyUs from "@/modules/web/WhyUs";
+
+const WebPage = () => {
+  return (
+    <div className="bg-black scroll-smooth selection:bg-blue-500/30 min-h-screen">
+      <Navbar />
+      <Hero />
+      <Section1 />
+      <Features />
+      <WhyUs />
+      <Section2 />
+      <CustomerStories />
+      <WallOfLove />
+      <InfraSection />
+    </div>
+  );
+};
+
+export default WebPage;

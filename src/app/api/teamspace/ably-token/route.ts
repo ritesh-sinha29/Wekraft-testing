@@ -1,0 +1,26 @@
+import { auth } from "@clerk/nextjs/server";
+import Ably from "ably";
+import { NextResponse } from "next/server";
+
+// GET /api/teamspace/ably-token
+// Returns a short-lived Ably capability token scoped to teamspace:*
+// The raw ABLY_API_KEY never reaches the browser.
+export async function GET() {
+  const { userId } = await auth();
+  if (!userId)
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const ably = new Ably.Rest(process.env.ABLY_API_KEY!);
+
+  const tokenRequest = await ably.auth.createTokenRequest({
+    clientId: userId,
+    capability: {
+      "teamspace:*": ["subscribe", "publish", "presence"],
+      [`user:notifications:${userId}`]: ["subscribe", "publish"],
+      "project:*": ["subscribe", "publish", "presence"],
+    },
+    ttl: 3600 * 1000, // 1 hour in ms
+  });
+
+  return NextResponse.json(tokenRequest);
+}
