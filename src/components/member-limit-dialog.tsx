@@ -34,7 +34,7 @@ export const MemberLimitDialog = ({
       onUpgrade();
     } else {
       // Default: navigate to billing/upgrade page
-      window.location.href = "/web/pricing";
+      window.location.href = "/dashboard/billing";
     }
     onOpenChange(false);
   };

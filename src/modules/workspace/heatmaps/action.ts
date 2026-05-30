@@ -18,13 +18,10 @@ export interface FolderNode {
   isOpen?: boolean;
 }
 
-// Typed task record — avoids `any` propagating through the UI
-export type TaskRecord = Record<string, unknown>;
-
 interface RepoStructure {
   root: FolderNode;
   lastUpdated: number;
-  tasks?: TaskRecord[];
+  tasks?: any[];
 }
 
 export interface CommitInfo {
@@ -42,26 +39,6 @@ export interface CommitInfo {
 const CACHE_TTL = 30 * 60;
 const REFRESH_COOLDOWN = 5 * 60;
 
-// GitHub owner/repo names: alphanumeric, hyphens, dots, underscores only
-const GITHUB_NAME_REGEX = /^[a-zA-Z0-9._-]+$/;
-
-/**
- * Validates that owner and repo strings are safe GitHub identifiers
- * and optionally that they match the project's linked repository.
- */
-function validateRepoParams(
-  owner: string,
-  repo: string,
-  linkedRepoFullName?: string | null,
-) {
-  if (!GITHUB_NAME_REGEX.test(owner) || !GITHUB_NAME_REGEX.test(repo)) {
-    throw new Error("Invalid repository owner or name");
-  }
-  if (linkedRepoFullName && linkedRepoFullName !== `${owner}/${repo}`) {
-    throw new Error("Repository does not match the project's linked repository");
-  }
-}
-
 export async function getRepoStructure(
   owner: string,
   repo: string,
@@ -72,7 +49,7 @@ export async function getRepoStructure(
     const { userId, getToken } = await auth();
     if (!userId) throw new Error("Unauthorized");
 
-    let tasksData: TaskRecord[] = [];
+    let tasksData: any[] = [];
     let finalOwnerClerkId: string | undefined = undefined;
     if (projectId) {
       const token = await getToken({ template: "convex" });
@@ -89,13 +66,7 @@ export async function getRepoStructure(
         finalOwnerClerkId = projectData.ownerClerkId;
       }
 
-      // ✅ Validate owner/repo against the project's actual linked repository
-      validateRepoParams(owner, repo, projectData?.repoFullName);
-
-      tasksData = await convex.query(api.workspace.getTimelineTasks, { projectId: projectId as any }) as TaskRecord[];
-    } else {
-      // ✅ Even without a projectId, sanitize the input format
-      validateRepoParams(owner, repo);
+      tasksData = await convex.query(api.workspace.getTimelineTasks, { projectId: projectId as any });
     }
 
     // ✅ Cache key has no userId — already shared across all users for this repo
@@ -241,12 +212,6 @@ export async function getRecentlyChangedPaths(
       if (projectData && projectData.ownerClerkId) {
         finalOwnerClerkId = projectData.ownerClerkId;
       }
-
-      // ✅ Validate owner/repo against the project's actual linked repository
-      validateRepoParams(owner, repo, projectData?.repoFullName);
-    } else {
-      // ✅ Even without a projectId, sanitize the input format
-      validateRepoParams(owner, repo);
     }
 
     const cacheKey = `wekraft:repo-churn:${owner}:${repo}`;
@@ -329,12 +294,6 @@ export async function getLatestCommits(
       if (projectData && projectData.ownerClerkId) {
         finalOwnerClerkId = projectData.ownerClerkId;
       }
-
-      // ✅ Validate owner/repo against the project's actual linked repository
-      validateRepoParams(owner, repo, projectData?.repoFullName);
-    } else {
-      // ✅ Even without a projectId, sanitize the input format
-      validateRepoParams(owner, repo);
     }
 
     const cacheKey = `wekraft:repo-commits:${owner}:${repo}`;

@@ -160,7 +160,7 @@ export function HarryAssistantSheet() {
                 Harry is available for Pro Plan Owner projects. Get codebase review,
                 pull requests support, and architecture analysis.
               </p>
-              <Button size="sm" className="w-full text-sm " onClick={() => router.push("/web/pricing")}>
+              <Button size="sm" className="w-full text-sm ">
                 Upgrade to Pro <LayersPlus />
               </Button>
             </div>

@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import React, { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,7 +28,6 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import ShowRepo from "@/modules/repo/ShowRepo";
 import { api } from "../../../../../convex/_generated/api";
-import { LinkedRepoDialog } from "@/modules/repo/LinkedRepoDialog";
 
 const RepositoriesPage = () => {
   const [selectedRepo, setSelectedRepo] = useState<{
@@ -37,9 +35,6 @@ const RepositoriesPage = () => {
     repo: string;
   } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-  const [linkedDialogOpen, setLinkedDialogOpen] = useState(false);
-  const [linkedProjectName, setLinkedProjectName] = useState("Wekraft Platform");
-  const router = useRouter();
 
   const unlinkedProjects = useQuery(api.project.getUnlinkedProjects);
   const connectedRepos = useQuery(api.repo.getConnectedRepos);
@@ -158,28 +153,8 @@ const RepositoriesPage = () => {
           setSelectedRepo={setSelectedRepo}
           unlinkedProjects={unlinkedProjects}
           connectedRepos={connectedRepos}
-          onLinkedSuccess={(projectName) => {
-            // Only show the dialog here if the tour is NOT active.
-            // When the tour is active, TourOrchestrator handles the LinkedRepoDialog.
-            if (typeof window === "undefined" || sessionStorage.getItem("wekraft_tour_active") !== "true") {
-              setLinkedProjectName(projectName);
-              setLinkedDialogOpen(true);
-            }
-          }}
         />
       </div>
-
-      <LinkedRepoDialog
-        open={linkedDialogOpen}
-        onOpenChange={(open) => {
-          setLinkedDialogOpen(open);
-          // When the dialog is closed ("Awesome, let's go!"), redirect to dashboard
-          if (!open) {
-            router.push("/dashboard");
-          }
-        }}
-        projectName={linkedProjectName}
-      />
     </div>
   );
 };

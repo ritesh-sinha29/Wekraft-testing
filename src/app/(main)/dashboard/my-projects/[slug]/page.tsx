@@ -303,7 +303,8 @@ const ProjectPage = () => {
             onDismiss={() => setShowWorkspaceTour(false)}
             onNext={() => {
               setShowWorkspaceTour(false);
-              router.push(`/dashboard/my-projects/${project?.slug}/workspace/tasks?tour=create-task`);
+              setInviteOpen(true);
+              setTimeout(() => setShowInviteTour(true), 400);
             }}
             onVisit={async () => {
               try { await markWorkspaceVisited(); } catch {}
@@ -324,8 +325,8 @@ const ProjectPage = () => {
             targetId="copy-invite-link-btn"
             onDismiss={() => setShowInviteTour(false)}
             onNext={() => {
-              // Resume tour for Step 7 (Install extension) on dashboard
-              router.push("/dashboard?tour=resume&resumeAfter=6");
+              // Resume tour for Step 5 (Set Deadline) on dashboard
+              router.push("/dashboard?tour=resume&resumeAfter=4");
             }}
           />
         </div>
@@ -675,7 +676,7 @@ function InviteTourTooltip({
         <div className="bg-linear-to-br from-neutral-800 to-neutral-950 text-card-foreground border border-border shadow-2xl rounded-lg p-5">
           <div className="flex items-center gap-2">
             <span className="flex items-center justify-center bg-primary text-primary-foreground text-[10px] font-bold w-5 h-5 rounded-full shrink-0">
-              6
+              4
             </span>
             <h3 className="text-sm font-semibold text-foreground">Invite your teammates</h3>
           </div>

@@ -35,7 +35,6 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import {
   type CommitInfo,
   type FolderNode,
-  type TaskRecord,
   getLatestCommits,
   getRecentlyChangedPaths,
   getRepoStructure,
@@ -52,7 +51,7 @@ interface HeatmapPanelProps {
   setRecentlyChangedPaths?: (paths: string[]) => void;
   setStructure: (structure: FolderNode | null) => void;
   isFreeTier?: boolean;
-  onTasksLoaded?: (tasks: TaskRecord[]) => void;
+  onTasksLoaded?: (tasks: any[]) => void;
 }
 
 // Helper to filter the tree for issues
@@ -104,7 +103,6 @@ const FolderTree = ({
   togglePath,
   issuePaths = [],
   isIssueView = false,
-  onFileClick,
 }: {
   node: FolderNode;
   level?: number;
@@ -112,7 +110,6 @@ const FolderTree = ({
   togglePath: (path: string) => void;
   issuePaths?: string[];
   isIssueView?: boolean;
-  onFileClick?: (path: string) => void;
 }) => {
   const isExpanded = expandedPaths.has(node.path);
   const hasChildren =
@@ -223,7 +220,6 @@ const FolderTree = ({
                   togglePath={togglePath}
                   issuePaths={issuePaths}
                   isIssueView={isIssueView}
-                  onFileClick={onFileClick}
                 />
               ))}
 
@@ -238,10 +234,6 @@ const FolderTree = ({
                 return (
                   <div
                     key={filePath}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (onFileClick) onFileClick(filePath);
-                    }}
                     className={cn(
                       "flex items-center gap-2 py-1 px-2 mb-0.5 rounded-sm text-[13px] hover:bg-accent/30 hover:text-foreground cursor-pointer transition-colors group relative",
                       fileHasIssue
@@ -299,18 +291,14 @@ export const HeatmapPanel = memo(
       new Set(),
     );
 
-    const [isIssuesOpen, setIsIssuesOpen] = useState(false);
-    const [isStructureOpen, setIsStructureOpen] = useState(false);
-    const [structureExpandedPaths, setStructureExpandedPaths] = useState<Set<string>>(
-      new Set(),
-    );
+    const [isIssuesOpen, setIsIssuesOpen] = useState(true);
     const [isCommitsOpen, setIsCommitsOpen] = useState(true);
     const [commits, setCommits] = useState<CommitInfo[]>([]);
     const [isCommitsLoading, setIsCommitsLoading] = useState(false);
 
     const [lastUpdated, setLastUpdated] = useState<number | null>(null);
 
-    const repository = useQuery(api.repo.getRepositoryById, repoId ? { repoId } : "skip");
+    const repository = useQuery(api.repo.getRepositoryById, { repoId });
 
     const issueTree = useMemo(() => {
       if (!structure || issuePaths.length === 0) return null;
@@ -340,13 +328,6 @@ export const HeatmapPanel = memo(
       }
     }, [issueTree]);
 
-    // Automatically expand project structure root node when it changes
-    useEffect(() => {
-      if (structure && structureExpandedPaths.size === 0) {
-        setStructureExpandedPaths(new Set([structure.path]));
-      }
-    }, [structure]);
-
     const loadStructure = useCallback(
       async (force = false) => {
         if (!repository?.repoOwner || !repository?.repoName) return;
@@ -370,13 +351,11 @@ export const HeatmapPanel = memo(
             toast.error(
               "Rate limit hit! Please wait 5 minutes between refreshes.",
             );
-            setIsLoading(false);
             return;
           }
 
           if (result.error) {
             toast.error(result.error);
-            setIsLoading(false);
             return;
           }
 
@@ -423,13 +402,11 @@ export const HeatmapPanel = memo(
             toast.error(
               "Rate limit hit! Please wait 5 minutes between refreshes.",
             );
-            setIsCommitsLoading(false);
             return;
           }
 
           if (result.error) {
             toast.error(result.error);
-            setIsCommitsLoading(false);
             return;
           }
 
@@ -470,16 +447,6 @@ export const HeatmapPanel = memo(
         next.add(path);
       }
       setIssueExpandedPaths(next);
-    };
-
-    const toggleStructurePath = (path: string) => {
-      const next = new Set(structureExpandedPaths);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      setStructureExpandedPaths(next);
     };
 
     const handleToggle = () => {
@@ -549,12 +516,7 @@ export const HeatmapPanel = memo(
               {/* REPOSITORY INFO */}
               <div className="space-y-4">
                 {project?.repoFullName ? (
-                  <a
-                    href={`https://github.com/${project.repoFullName}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block p-4 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-border dark:border-white/5 group hover:border-primary/30 hover:bg-neutral-100 dark:hover:bg-neutral-800/50 transition-all duration-300 cursor-pointer"
-                  >
+                  <div className="p-4 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-border dark:border-white/5 group hover:border-primary/30 transition-all duration-300">
                     <div className="flex items-center gap-3">
                       <div className="p-2 bg-primary/10 rounded-lg text-primary">
                         <Github size={18} />
@@ -569,7 +531,7 @@ export const HeatmapPanel = memo(
                         </p>
                       </div>
                     </div>
-                  </a>
+                  </div>
                 ) : (
                   <div className="p-6 rounded-xl border border-dashed border-border dark:border-white/10 bg-zinc-50 dark:bg-zinc-900 text-center space-y-4">
                     <div className="flex flex-col items-center gap-2">
@@ -600,7 +562,7 @@ export const HeatmapPanel = memo(
                     insights / errors and more.
                   </p>
 
-                  <Button className="text-xs cursor-pointer mt-4" size="sm" onClick={() => router.push("/web/pricing")}>
+                  <Button className="text-xs cursor-pointer mt-4" size="sm">
                     Upgrade Now <Clover />
                   </Button>
                 </div>
@@ -609,7 +571,7 @@ export const HeatmapPanel = memo(
                   {/* ISSUE BOX */}
                   <div className="w-full space-y-4">
                     <Button
-                      className="w-full flex items-center justify-start relative px-4"
+                      className="w-full flex items-center justify-center relative px-10"
                       variant={"secondary"}
                       onClick={() => setIsIssuesOpen(!isIssuesOpen)}
                     >
@@ -697,73 +659,12 @@ export const HeatmapPanel = memo(
                       )}
                     </AnimatePresence>
                   </div>
-
-                  {/* STRUCTURE BOX */}
-                  <div className="w-full space-y-4 pt-2">
-                    <Button
-                      className="w-full flex items-center justify-start relative px-4"
-                      variant={"secondary"}
-                      onClick={() => setIsStructureOpen(!isStructureOpen)}
-                    >
-                      <span className="flex items-center gap-2">
-                        <FolderSymbol folderName="project" width={18} height={18} />
-                        Project Structure
-                      </span>
-
-                      <ChevronDown
-                        className={cn(
-                          "absolute right-4 transition-transform duration-200",
-                          isStructureOpen && "rotate-180",
-                        )}
-                        size={18}
-                      />
-                    </Button>
-
-                    <AnimatePresence>
-                      {isStructureOpen && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: "auto", opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="max-h-[360px] overflow-y-auto custom-scrollbar space-y-2 pr-1 pl-1 bg-accent/5 rounded-xl border border-border p-3">
-                            {structure ? (
-                              <FolderTree
-                                node={structure}
-                                expandedPaths={structureExpandedPaths}
-                                togglePath={toggleStructurePath}
-                                issuePaths={issuePaths}
-                                isIssueView={false}
-                                onFileClick={(filePath) => {
-                                  if (repository?.repoUrl) {
-                                    window.open(`${repository.repoUrl}/blob/main/${filePath}`, "_blank", "noopener,noreferrer");
-                                  } else {
-                                    toast.error("Repository URL not found");
-                                  }
-                                }}
-                              />
-                            ) : isLoading ? (
-                              <div className="flex flex-col items-center justify-center py-8 space-y-3">
-                                <Loader2 size={20} className="animate-spin text-primary" />
-                                <p className="text-xs text-muted-foreground">Loading file structure...</p>
-                              </div>
-                            ) : (
-                              <div className="text-center py-8 text-zinc-500 text-xs italic">
-                                No structure loaded
-                              </div>
-                            )}
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
  
                   {/* COMMITS BOX */}
                   <div className="w-full space-y-4 pt-2">
                     <div className="flex items-center gap-2">
                       <Button
-                        className="flex-1 flex items-center justify-start relative px-4"
+                        className="flex-1 flex items-center justify-center relative px-10"
                         variant={"secondary"}
                         onClick={() => setIsCommitsOpen(!isCommitsOpen)}
                       >
