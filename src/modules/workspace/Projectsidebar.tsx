@@ -33,6 +33,7 @@ import {
   Video,
   X,
 } from "lucide-react";
+import { HelpSupportDialog } from "@/modules/dashboard/components/HelpSupportDialog";
 import Image from "next/image";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
@@ -142,7 +143,7 @@ export default function ProjectSidebar() {
   const { signOut } = useClerk();
   const { state, setOpen } = useSidebar();
   const isCollapsed = state === "collapsed";
-
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -770,22 +771,20 @@ export default function ProjectSidebar() {
               {(!searchQuery || matchesHelp) && (
                 <SidebarMenuItem>
                   <SidebarMenuButton
-                    asChild
                     tooltip="Help and Support"
-                    className="group relative overflow-hidden cursor-pointer  group-data-[collapsible=icon]:hidden"
+                    className="group relative overflow-hidden cursor-pointer group-data-[collapsible=icon]:hidden"
+                    onClick={() => setIsHelpOpen(true)}
                   >
-                    <Link
-                      href={`/dashboard/my-projects/${slug}/help`}
-                      className="relative z-10 flex items-center gap-3 w-full group-data-[collapsible=icon]:justify-center"
-                    >
+                    <div className="relative z-10 flex items-center gap-3 w-full group-data-[collapsible=icon]:justify-center">
                       <MessageCircleQuestionMark className="h-5 w-5 text-foreground" />
                       <span className="text-sm text-foreground group-data-[collapsible=icon]:hidden">
                         Help and Support
                       </span>
-                    </Link>
+                    </div>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               )}
+
 
               {/* DELETE */}
               {(!searchQuery || matchesDelete) && (
@@ -912,7 +911,7 @@ export default function ProjectSidebar() {
                       <Separator className="mb-1 opacity-50" />
 
                       <Link
-                        href="/dashboard/settings"
+                        href="/dashboard/my-profile"
                         className="flex items-center gap-2 px-2 py-2 rounded-sm text-xs hover:bg-accent transition-colors"
                       >
                         <Settings2 className="h-3.5 w-3.5" />
@@ -954,6 +953,7 @@ export default function ProjectSidebar() {
         )}
       </SidebarFooter>
       {/* <AiAssistantSheet open={assistantOpen} onOpenChange={setAssistantOpen} /> */}
+      <HelpSupportDialog open={isHelpOpen} onOpenChange={setIsHelpOpen} />
     </Sidebar>
   );
 }
