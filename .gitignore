@@ -42,3 +42,7 @@ next-env.d.ts
 
 # clerk configuration (can include secrets)
 /.clerk/
+
+# internal content files
+wekraft_insta_content_pack.md
+wekraft_video_scripts_cinematic.md
