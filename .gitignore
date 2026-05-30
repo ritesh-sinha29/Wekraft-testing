@@ -46,3 +46,5 @@ next-env.d.ts
 # internal content files
 wekraft_insta_content_pack.md
 wekraft_video_scripts_cinematic.md
+env-production
+env-local
