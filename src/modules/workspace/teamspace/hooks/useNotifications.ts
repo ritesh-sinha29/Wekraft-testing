@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Ably from "ably";
+import { getAblyClient } from "@/lib/ably";
 import { toast } from "sonner";
 import { formatNotificationContent } from "../lib/utils";
 
@@ -21,17 +22,7 @@ export interface Notification {
   created_at: number;
 }
 
-let ablyClient: Ably.Realtime | null = null;
 
-function getAblyClient(): Ably.Realtime {
-  if (!ablyClient) {
-    ablyClient = new Ably.Realtime({
-      authUrl: "/api/teamspace/ably-token",
-      authMethod: "GET",
-    });
-  }
-  return ablyClient;
-}
 
 export function useNotifications(userId: string) {
   const [notifications, setNotifications] = useState<Notification[]>([]);

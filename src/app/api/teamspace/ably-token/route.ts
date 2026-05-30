@@ -2,6 +2,8 @@ import { auth } from "@clerk/nextjs/server";
 import Ably from "ably";
 import { NextResponse } from "next/server";
 
+const ably = new Ably.Rest(process.env.ABLY_API_KEY!);
+
 // GET /api/teamspace/ably-token
 // Returns a short-lived Ably capability token scoped to teamspace:*
 // The raw ABLY_API_KEY never reaches the browser.
@@ -9,8 +11,6 @@ export async function GET() {
   const { userId } = await auth();
   if (!userId)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const ably = new Ably.Rest(process.env.ABLY_API_KEY!);
 
   const tokenRequest = await ably.auth.createTokenRequest({
     clientId: userId,

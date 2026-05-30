@@ -21,6 +21,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Ably from "ably";
+import { getAblyClient } from "@/lib/ably";
 import { toast } from "sonner";
 import { chatDb } from "@/lib/db";
 
@@ -75,17 +76,7 @@ export interface TypingUser {
   userName: string;
 }
 
-let ablyClient: Ably.Realtime | null = null;
 
-function getAblyClient(): Ably.Realtime {
-  if (!ablyClient) {
-    ablyClient = new Ably.Realtime({
-      authUrl: "/api/teamspace/ably-token",
-      authMethod: "GET",
-    });
-  }
-  return ablyClient;
-}
 
 // Global in-memory cache for ultra-fast prefetching and cross-component sync
 const memoryCache: Record<string, { messages: Message[], nextCursor: string | null, timestamp: number }> = {};
