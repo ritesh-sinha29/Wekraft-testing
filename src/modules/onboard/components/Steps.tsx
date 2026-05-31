@@ -1,6 +1,6 @@
 "use client";
 import { useClerk, useUser } from "@clerk/nextjs";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Check,
@@ -24,6 +24,8 @@ import {
   Sun,
   TrendingUp,
   User,
+  ChevronDown,
+  Link2,
 } from "lucide-react";
 import { nanoid } from "nanoid";
 import Image from "next/image";
@@ -36,12 +38,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { INVITE_LINK, PROJECT_STATUS, ROLES } from "@/lib/static-store";
 import { cn } from "@/lib/utils";
 import { api } from "../../../../convex/_generated/api";
 import { IdentityRolePicker } from "./IdentityRolePicker";
 import { OnboardingRightSide } from "./OnboardingRightSide";
-import { PURPOSES, STEPS } from "./StaticContent";
+import { PURPOSES, STEPS, SOURCES } from "./StaticContent";
 
 const stepVariants = {
   enter: (direction: number) => ({
@@ -81,24 +89,127 @@ export function MultiStepOnboarding() {
   const { user: clerkUser, isLoaded: isUserLoaded } = useUser();
 
   // Mutations
+  const updateReferralAndSource = useMutation(api.user.updateUserReferralAndSource);
   const updatePurposes = useMutation(api.user.updateUserPrimaryUsage);
   const updateIdentity = useMutation(api.user.updateUserIdentity);
   const initProject = useMutation(api.project.projectInitOnboarding);
   const completeOnboarding = useMutation(api.user.completeOnboarding);
 
   // Form State
+  // Step 1: Source & Referral
+  const [heardFrom, setHeardFrom] = useState("");
+  const [referralCode, setReferralCode] = useState("");
+
+  const parts = referralCode.trim().split("-");
+  const suffix = parts.length >= 2 ? parts[parts.length - 1] : "";
+  const isReferralCodeReady = parts.length >= 2 && suffix.length >= 5;
+
+  const checkResult = useQuery(
+    api.user.checkReferralCode,
+    isReferralCodeReady ? { code: referralCode.trim() } : "skip"
+  );
+
+  const isCheckingReferral = isReferralCodeReady && checkResult === undefined;
+
+  let referralValid: boolean | undefined = undefined;
+  let referralMessage = "";
+
+  if (referralCode.trim().length > 0) {
+    if (parts.length < 2) {
+      referralValid = false;
+      referralMessage = "Referral code format is username-suffix";
+    } else if (suffix.length < 5) {
+      referralValid = false;
+      referralMessage = "Referral code suffix is incomplete";
+    } else if (checkResult) {
+      referralValid = checkResult.valid;
+      referralMessage = checkResult.message;
+    }
+  }
+
+  // Step 2: Purposes
   const [purposes, setPurposes] = useState<string[]>([]);
 
-  // Step 2
+  // Step 3: Identity
   const [username, setUsername] = useState("");
   const [selectedRole, setSelectedRole] = useState("");
   const [usernameError, setUsernameError] = useState<string | null>(null);
 
-  // Step 3
+  // Step 4: Project
   const [projectName, setProjectName] = useState("");
   const isPublic = true; // default always true.
   const [projectStatus, setProjectStatus] = useState("");
   const [generatedInviteLink, setGeneratedInviteLink] = useState("");
+
+  // Step 5: Invite
+  const [email, setEmail] = useState("");
+  const [inviting, setInviting] = useState(false);
+  const [role, setRole] = useState<"member" | "admin">("member");
+  const [copied, setCopied] = useState(false);
+
+  const fullInviteLink = generatedInviteLink ? `${INVITE_LINK}invite/${generatedInviteLink}?role=${role}` : "";
+
+  const isValidEmail = (val: string) => {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val);
+  };
+
+  const handleCopy = () => {
+    if (!fullInviteLink) return;
+    navigator.clipboard.writeText(fullInviteLink);
+    setCopied(true);
+    toast.success("Invite link copied!", {
+      style: {
+        background: "var(--popover)",
+        color: "var(--popover-foreground)",
+        border: "1px solid var(--border)",
+      }
+    });
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleInvite = async () => {
+    if (!isValidEmail(email)) return;
+    setInviting(true);
+    try {
+      const res = await fetch("/api/invite/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          to: email,
+          projectName: projectName || "WeKraft Project",
+          inviteLink: fullInviteLink,
+          role: role,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to send invitation email");
+      }
+
+      toast.success(`Invitation sent to ${email}`, {
+        style: {
+          background: "var(--popover)",
+          color: "var(--popover-foreground)",
+          border: "1px solid var(--border)",
+        }
+      });
+      setEmail("");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to send invitation. Please try again.", {
+        style: {
+          background: "var(--popover)",
+          color: "var(--popover-foreground)",
+          border: "1px solid var(--border)",
+        }
+      });
+    } finally {
+      setInviting(false);
+    }
+  };
 
   const selectedTheme = "dark";
 
@@ -107,12 +218,31 @@ export function MultiStepOnboarding() {
       setIsLoading(true);
 
       if (currentStep === 1) {
+        if (!heardFrom) {
+          toast.error("Please select where you heard about us");
+          setIsLoading(false);
+          return;
+        }
+
+        if (referralCode.trim().length > 0 && referralValid === false) {
+          toast.error(referralMessage || "Please enter a valid referral code or clear it");
+          setIsLoading(false);
+          return;
+        }
+
+        await updateReferralAndSource({
+          heardFrom,
+          referalUsing: referralCode.trim() || undefined,
+        });
+      }
+
+      if (currentStep === 2) {
         if (purposes.length > 0) {
           await updatePurposes({ purposes });
         }
       }
 
-      if (currentStep === 2) {
+      if (currentStep === 3) {
         if (usernameError) {
           toast.error(usernameError);
           setIsLoading(false);
@@ -135,7 +265,7 @@ export function MultiStepOnboarding() {
         }
       }
 
-      if (currentStep === 3) {
+      if (currentStep === 4) {
         if (!projectName || !projectStatus) {
           toast.error("Please provide project name and status");
           setIsLoading(false);
@@ -157,10 +287,16 @@ export function MultiStepOnboarding() {
         }
       }
 
-      if (currentStep === 4) {
+      if (currentStep === 5) {
         await completeOnboarding();
         toast.success("Welcome to WeKraft!");
-        router.push("/dashboard");
+        const postLoginRedirect = typeof window !== "undefined" ? sessionStorage.getItem("wekraft_post_login_redirect") : null;
+        if (postLoginRedirect) {
+          typeof window !== "undefined" && sessionStorage.removeItem("wekraft_post_login_redirect");
+          router.push(postLoginRedirect);
+        } else {
+          router.push("/dashboard");
+        }
         return;
       }
 
@@ -197,7 +333,7 @@ export function MultiStepOnboarding() {
     );
   };
 
-  const isSkip = currentStep === 1;
+  const isSkip = currentStep === 1 || currentStep === 2;
 
   return (
     <div className="min-h-screen w-full bg-black! text-white flex flex-row overflow-hidden font-sans relative">
@@ -250,42 +386,113 @@ export function MultiStepOnboarding() {
                 <h2 className="text-2xl font-semibold tracking-tight text-white flex items-center gap-2.5">
                   {currentStep === 1 && (
                     <>
-                      {/* <Compass className="w-5.5 h-5.5 text-zinc-300 shrink-0" /> */}
-                      <span>What brings you to WeKraft</span>
+                      <span>Where did you hear about us?</span>
                     </>
                   )}
                   {currentStep === 2 && (
                     <>
-                      {/* <User className="w-5.5 h-5.5 text-zinc-300 shrink-0" /> */}
-                      <span>Let’s set up your identity</span>
+                      <span>What brings you to WeKraft</span>
                     </>
                   )}
                   {currentStep === 3 && (
                     <>
-                      {/* <FolderGit className="w-5.5 h-5.5 text-zinc-300 shrink-0" /> */}
-                      <span>Let's create your first project</span>
+                      <span>Let’s set up your identity</span>
                     </>
                   )}
                   {currentStep === 4 && (
                     <>
-                      {/* <Share2 className="w-5.5 h-5.5 text-zinc-300 shrink-0" /> */}
+                      <span>Let's create your first project</span>
+                    </>
+                  )}
+                  {currentStep === 5 && (
+                    <>
                       <span>Share invite link</span>
                     </>
                   )}
                 </h2>
-                {/* <p className="text-sm text-zinc-200 mt-1">
-                  {currentStep === 1 && "Pick one or more options to help us customize your workspace."}
-                  {currentStep === 2 && "Choose a unique username and select your role."}
-                  {currentStep === 3 && "Create your project workspace to start syncing and collaborating."}
-                  {currentStep === 4 && "Choose a theme preference that best fits your working style."}
-                  {currentStep === 5 && "Invite your friends or teammates to start working together."}
-                </p> */}
               </div>
 
               {/* Step Content */}
               <div className="flex-1 min-h-[250px] flex flex-col justify-center">
-                {/* STEP 1 */}
+                {/* STEP 1: Source & Referral */}
                 {currentStep === 1 && (
+                  <div className="space-y-5">
+                    <div className="grid grid-cols-3 gap-3">
+                      {SOURCES.map((s) => {
+                        const selected = heardFrom === s.id;
+                        return (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => setHeardFrom(s.id)}
+                            className={cn(
+                              "flex flex-col items-center justify-center p-3 rounded-lg border text-center transition-all duration-200 cursor-pointer h-18 select-none",
+                              selected
+                                ? "bg-white/5! border-white/20! text-zinc-100! shadow-[0_0_12px_rgba(255,255,255,0.015)]"
+                                : "bg-[#0f0f12]! border-zinc-800! text-zinc-300 hover:border-zinc-700! hover:bg-zinc-900/10! hover:text-white",
+                            )}
+                          >
+                            <s.icon
+                              className={cn(
+                                "w-5 h-5 mb-2 transition-colors",
+                                selected ? "text-zinc-100" : "text-zinc-455",
+                              )}
+                            />
+                            <span className="text-[11px] font-medium tracking-wide">
+                              {s.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="space-y-2 mt-4 font-sans">
+                      <Label
+                        htmlFor="referralCode"
+                        className="text-sm font-medium text-zinc-300"
+                      >
+                        Referral Code <span className="text-zinc-500 font-normal text-xs">(optional)</span>
+                      </Label>
+                      <div className="relative">
+                        <Input
+                          id="referralCode"
+                          placeholder="e.g. madhav-906y79"
+                          className={cn(
+                            "border rounded-sm h-10 text-xs transition-all tracking-wider font-mono bg-[#0f0f12]!",
+                            referralValid === false
+                              ? "border-red-500! focus-visible:ring-red-500/20!"
+                              : referralValid === true
+                                ? "border-emerald-500! focus-visible:ring-emerald-500/20!"
+                                : "border-zinc-800! focus-visible:ring-zinc-500/30!"
+                          )}
+                          value={referralCode}
+                          onChange={(e) => setReferralCode(e.target.value)}
+                        />
+                        {isCheckingReferral && (
+                          <div className="absolute right-3 top-3">
+                            <Loader2 className="w-4 h-4 animate-spin text-zinc-400" />
+                          </div>
+                        )}
+                        {!isCheckingReferral && referralValid === true && (
+                          <div className="absolute right-3 top-3">
+                            <Check className="w-4 h-4 text-emerald-500" />
+                          </div>
+                        )}
+                      </div>
+                      {referralCode.trim().length > 0 && referralMessage && (
+                        <p className={cn(
+                          "text-[11px] mt-1 font-medium",
+                          referralValid === true ? "text-emerald-500" : "text-red-500"
+                        )}>
+                          {referralMessage}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* STEP 2 */}
+                {currentStep === 2 && (
                   <div className="space-y-3.5">
                     {PURPOSES.map((p) => {
                       const selected = purposes.includes(p.id);
@@ -307,7 +514,7 @@ export function MultiStepOnboarding() {
                                 "w-8.5 h-8.5 rounded-md border flex items-center justify-center transition-all",
                                 selected
                                   ? "bg-neutral-800 text-zinc-100 border-zinc-700"
-                                  : "bg-[#161619] text-zinc-450 border-zinc-800/60",
+                                  : "bg-[#161619] text-zinc-455 border-zinc-800/60",
                               )}
                             >
                               <p.icon className="w-4 h-4" />
@@ -349,8 +556,8 @@ export function MultiStepOnboarding() {
                   </div>
                 )}
 
-                {/* STEP 2 */}
-                {currentStep === 2 && (
+                {/* STEP 3 */}
+                {currentStep === 3 && (
                   <IdentityRolePicker
                     username={username}
                     onUsernameChange={setUsername}
@@ -361,8 +568,8 @@ export function MultiStepOnboarding() {
                   />
                 )}
 
-                {/* STEP 3 */}
-                {currentStep === 3 && (
+                {/* STEP 4 */}
+                {currentStep === 4 && (
                   <div className="space-y-5">
                     <div className="space-y-1.5 font-sans">
                       <Label
@@ -426,50 +633,62 @@ export function MultiStepOnboarding() {
                   </div>
                 )}
 
-                {/* STEP 4 */}
-                {currentStep === 4 && (
-                  <div className="space-y-4 font-sans">
-                    <div className="space-y-1.5">
-                      <Label className="text-base text-zinc-300 font-medium">
-                        Project Invite Link
-                      </Label>
-                      <div className="flex gap-4">
-                        <Input
-                          readOnly
-                          value={`${INVITE_LINK}${generatedInviteLink}`}
-                          className="flex-1 bg-neutral-900! h-11 text-sm tracking-tight border border-zinc-800! rounded-sm focus-visible:ring-1 focus-visible:ring-zinc-500/25!"
-                        />
-                        <Button
-                          variant="default"
-                          size="sm"
-                          className="bg-zinc-900 hover:bg-zinc-900/60 h-11 text-white px-5! text-xs border border-zinc-700/80 rounded-sm cursor-pointer transition-all"
-                          onClick={() => {
-                            navigator.clipboard.writeText(
-                              `${INVITE_LINK}${generatedInviteLink}`,
-                            );
-                            toast.success("Link copied to clipboard!");
+                {/* STEP 5 */}
+                {currentStep === 5 && (
+                  <div className="space-y-6 font-sans bg-[#0a0a0a] border border-[#333333] shadow-[0_0_50px_rgba(0,0,0,0.8)] rounded-xl p-6 text-white animate-in fade-in duration-300">
+                    {/* Header */}
+                    <div className="space-y-1.5 text-left">
+                      <h3 className="text-lg font-bold tracking-tight text-white flex items-center gap-1.5">
+                        Invite Teammate
+                      </h3>
+                      <p className="text-zinc-400 text-xs leading-relaxed">
+                        Share this link with your team to collaborate.
+                      </p>
+                    </div>
+
+                    {/* Email Invite Section */}
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2 p-1.5 pl-3.5 border border-[#333333] rounded-lg focus-within:border-neutral-400 focus-within:ring-1 focus-within:ring-neutral-400/30 transition-all duration-150 bg-black">
+                        <input
+                          type="email"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && isValidEmail(email) && !inviting) {
+                              e.preventDefault();
+                              handleInvite();
+                            }
                           }}
+                          placeholder="Email address"
+                          className="border-none bg-transparent outline-none focus:outline-none focus:ring-0 focus-visible:ring-0 text-xs font-normal text-white px-1 h-10 truncate placeholder:text-zinc-500 flex-grow [&:-webkit-autofill]:transition-colors [&:-webkit-autofill]:duration-[5000000ms] [&:-webkit-autofill]:text-white"
+                        />
+
+                        <Button
+                          size="sm"
+                          onClick={handleInvite}
+                          disabled={!isValidEmail(email) || inviting}
+                          variant={isValidEmail(email) ? "default" : "secondary"}
+                          className="h-8 px-4 rounded-md text-xs font-semibold transition-all duration-150 active:scale-95 cursor-pointer border-none"
                         >
-                          <Copy className="w-3.5 h-3.5" />
-                          Copy
+                          {inviting ? (
+                            <span className="animate-in fade-in duration-200">Inviting...</span>
+                          ) : (
+                            <span className="animate-in fade-in duration-200">Invite</span>
+                          )}
                         </Button>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3 my-5">
-                      <div className="h-[1px] flex-1 bg-zinc-800" />
-                      <span className="text-[9px] text-zinc-400 uppercase tracking-widest font-normal">
-                        Share via
-                      </span>
-                      <div className="h-[1px] flex-1 bg-zinc-800" />
-                    </div>
-
-                    <div className="">
-                      <Textarea
-                        placeholder="enter your Teammate email here...."
-                        className="resize-none bg-[#0f0f12]! border border-zinc-800! h-24! placeholder:text-zinc-500 text-neutral-100 rounded-sm focus-visible:ring-1 focus-visible:ring-zinc-500/25!"
-                      />
-                    </div>
+                    {/* Copy Invite Link Option */}
+                    <Button
+                      variant="outline"
+                      onClick={handleCopy}
+                      disabled={!fullInviteLink}
+                      className="flex items-center justify-center gap-1.5 mx-auto text-xs text-white bg-transparent border border-white hover:bg-white hover:text-black transition-all font-semibold cursor-pointer w-fit px-8 h-9 rounded-md mt-2"
+                    >
+                      <Link2 className="w-3.5 h-3.5" />
+                      {copied ? "Copied invite link!" : "Copy invite link"}
+                    </Button>
                   </div>
                 )}
               </div>
@@ -512,7 +731,7 @@ export function MultiStepOnboarding() {
                         {" "}
                         Saving <Loader2 className="w-3 h-3 animate-spin" />{" "}
                       </>
-                    ) : currentStep === 4 ? (
+                    ) : currentStep === 5 ? (
                       <>
                         Get Started
                         <Rocket className="w-3.5 h-3.5" />

@@ -340,6 +340,46 @@ export const getProjectUsage = query({
 });
 
 // ====================================
+// GET IDs OF PROJECTS THE USER BELONGS TO
+// Used by the Ably token route to scope channel capabilities.
+// ====================================
+export const getMyProjectIds = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_token", (q) =>
+        q.eq("clerkToken", identity.tokenIdentifier),
+      )
+      .unique();
+
+    if (!user) return [];
+
+    // All projects the user owns
+    const ownedProjects = await ctx.db
+      .query("projects")
+      .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
+      .collect();
+
+    // All projects the user is a member of (but doesn't own)
+    const memberships = await ctx.db
+      .query("projectMembers")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .collect();
+
+    const ownedIds = new Set(ownedProjects.map((p) => p._id as string));
+    const memberIds = memberships
+      .map((m) => m.projectId as string)
+      .filter((id) => !ownedIds.has(id));
+
+    return [...ownedIds, ...memberIds];
+  },
+});
+
+// ====================================
 // GET USER PROJECTS with members (LIMITED )
 // ====================================
 export const getUserProjects = query({
@@ -514,6 +554,7 @@ export const createJoinRequest = mutation({
     projectId: v.id("projects"),
     message: v.optional(v.string()),
     source: v.union(v.literal("invited"), v.literal("manual")),
+    role: v.optional(v.union(v.literal("admin"), v.literal("member"))),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -573,6 +614,7 @@ export const createJoinRequest = mutation({
       userImage: user.avatarUrl,
       message: args.message,
       source: args.source,
+      role: args.role || "member",
       status: "pending",
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -822,7 +864,7 @@ export const handleJoinRequest = mutation({
           userId: request.userId,
           userName: request.userName,
           userImage: request.userImage,
-          AccessRole: "member",
+          AccessRole: request.role || "member",
           joinedAt: Date.now(),
         });
       }

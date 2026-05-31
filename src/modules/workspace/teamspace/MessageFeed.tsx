@@ -23,6 +23,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useMessages } from "./hooks/useMessages";
 import { MessageItem } from "./MessageItem";
 import { MessageComposer } from "./MessageComposer";
+import { useTeamspaceAgent } from "./hooks/use-teamspace-agent";
 import { Message } from "./hooks/useMessages";
 import { Channel } from "./hooks/useChannels";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -46,11 +47,15 @@ import {
   PinOff,
   TicketPlus,
   TicketSlash,
+  Check,
+  RotateCcw,
+  Timer,
 } from "lucide-react";
 import { format, isToday, isYesterday } from "date-fns";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { convertImageToPng } from "@/lib/upload-utils";
 import {
   Tooltip,
   TooltipContent,
@@ -101,6 +106,28 @@ function DateDivider({ timestamp }: { timestamp: number }) {
   );
 }
 
+const getTempMsgContent = (
+  agent: "kaya" | "harry",
+  assistantMsg: any,
+  toolStatus: any,
+) => {
+  if (assistantMsg?.text) return assistantMsg.text;
+  if (toolStatus) {
+    const nameMap: Record<string, string> = {
+      getMemberWorkload: "Analyzing team workloads",
+      getProjectInsights: "Reviewing project timeline and deadline",
+      getTasksSummary: "Summarizing active tasks and critical items",
+      getIssuesSummary: "Reviewing open and critical issues",
+      getProjectVelocity: "Calculating weekly velocity and cycle times",
+      getSprintHistory: "Analyzing past sprint completion rates",
+    };
+    const desc =
+      nameMap[toolStatus.toolName] || `Running tool ${toolStatus.toolName}`;
+    return `${agent === "kaya" ? "Kaya" : "Harry"} is executing: ${desc}...`;
+  }
+  return `${agent === "kaya" ? "Kaya" : "Harry"} is thinking...`;
+};
+
 export function MessageFeed({
   channel,
   currentUserId,
@@ -116,6 +143,22 @@ export function MessageFeed({
   const { isOwner, isPower } = useProjectPermissions(
     projectId as Id<"projects">,
   );
+
+  const kayaAgent = useTeamspaceAgent(projectId, "kaya", channel?.id ?? null);
+  const harryAgent = useTeamspaceAgent(projectId, "harry", channel?.id ?? null);
+
+  const kayaAssistantMsg = [...kayaAgent.messages]
+    .reverse()
+    .find((m) => m.role === "assistant");
+  const kayaToolStatus = kayaAgent.toolStatus;
+
+  const harryAssistantMsg = [...harryAgent.messages]
+    .reverse()
+    .find((m) => m.role === "assistant");
+  const harryToolStatus = harryAgent.toolStatus;
+
+  const kayaStreamingText = kayaAssistantMsg?.text;
+  const harryStreamingText = harryAssistantMsg?.text;
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -145,15 +188,29 @@ export function MessageFeed({
     projectId,
     currentUserId,
     currentUserName,
-  )
+  );
 
-  const [optimisticUploads, setOptimisticUploads] = useState<Array<{
-    id: string;
-    file: File;
-    previewUrl: string;
-    caption: string;
-  }>>([]);
+  const lastFeedMessage =
+    messages.length > 0 ? messages[messages.length - 1] : null;
+  const isAgentLastMessage =
+    lastFeedMessage &&
+    (lastFeedMessage.user_id === "kaya" || lastFeedMessage.user_id === "harry");
+
+  const showKayaTemp =
+    (kayaAgent.isStreaming || !!kayaToolStatus) && !isAgentLastMessage;
+  const showHarryTemp =
+    (harryAgent.isStreaming || !!harryToolStatus) && !isAgentLastMessage;
+
+  const [optimisticUploads, setOptimisticUploads] = useState<
+    Array<{
+      id: string;
+      file: File;
+      previewUrl: string;
+      caption: string;
+    }>
+  >([]);
   const [showStorageLimitDialog, setShowStorageLimitDialog] = useState(false);
+  const [ticketsOpen, setTicketsOpen] = useState(false);
 
   const project = useQuery(api.project.getProjectById, {
     projectId: projectId as Id<"projects">,
@@ -165,14 +222,29 @@ export function MessageFeed({
   );
 
   const handleUploadMedia = async (file: File, caption: string) => {
+    let processedFile = file;
+    if (file.type.startsWith("image/")) {
+      try {
+        processedFile = await convertImageToPng(file);
+      } catch (err) {
+        console.error(
+          "Failed to convert image to PNG, uploading original:",
+          err,
+        );
+      }
+    }
+
     const id = "optimistic-upload-" + crypto.randomUUID();
-    const previewUrl = URL.createObjectURL(file);
-    
-    setOptimisticUploads(prev => [...prev, { id, file, previewUrl, caption }]);
+    const previewUrl = URL.createObjectURL(processedFile);
+
+    setOptimisticUploads((prev) => [
+      ...prev,
+      { id, file: processedFile, previewUrl, caption },
+    ]);
 
     try {
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", processedFile);
       formData.append("projectId", projectId);
 
       const res = await fetch("/api/teamspace/media", {
@@ -186,17 +258,17 @@ export function MessageFeed({
           const errData = await res.json();
           errMsg = errData.error || errMsg;
         } catch {
-          errMsg = await res.text() || errMsg;
+          errMsg = (await res.text()) || errMsg;
         }
         throw new Error(errMsg);
       }
 
       const data = await res.json();
       if (data.url) {
-        const isImage = file.type.startsWith("image/");
+        const isImage = processedFile.type.startsWith("image/");
         const markdownLink = isImage
-          ? `![${file.name}](${data.url})`
-          : `[${file.name}](${data.url})`;
+          ? `![${processedFile.name}](${data.url})`
+          : `[${processedFile.name}](${data.url})`;
 
         let finalContent = markdownLink;
         if (caption.trim()) {
@@ -204,7 +276,7 @@ export function MessageFeed({
         }
 
         // Remove from optimistic uploads before adding the optimistic message
-        setOptimisticUploads(prev => prev.filter(u => u.id !== id));
+        setOptimisticUploads((prev) => prev.filter((u) => u.id !== id));
 
         await sendMessage(
           finalContent,
@@ -212,7 +284,7 @@ export function MessageFeed({
           currentUserName,
           currentUserImage,
           replyingTo?.id,
-          undefined
+          undefined,
         );
       }
     } catch (err: any) {
@@ -229,7 +301,7 @@ export function MessageFeed({
         toast.error("Failed to upload media");
       }
     } finally {
-      setOptimisticUploads(prev => prev.filter(u => u.id !== id));
+      setOptimisticUploads((prev) => prev.filter((u) => u.id !== id));
       URL.revokeObjectURL(previewUrl);
       if (replyingTo) {
         setReplyingTo(null);
@@ -246,8 +318,11 @@ export function MessageFeed({
   const tickets = useQuery(api.workspace.getTickets, {
     projectId: projectId as Id<"projects">,
   });
-  const updateTicketStatusMutation = useMutation(api.workspace.updateTicketStatus);
-  const openTicketsCount = tickets?.filter((t) => t.status === "open").length ?? 0;
+  const updateTicketStatusMutation = useMutation(
+    api.workspace.updateTicketStatus,
+  );
+  const openTicketsCount =
+    tickets?.filter((t) => t.status === "open").length ?? 0;
 
   // Trigger jumpToMessage when navigated from a notification
   useEffect(() => {
@@ -309,9 +384,11 @@ export function MessageFeed({
 
       if (target) {
         // Clear previous highlights
-        document.querySelectorAll(".premium-message-highlight").forEach((el) => {
-          el.classList.remove("premium-message-highlight");
-        });
+        document
+          .querySelectorAll(".premium-message-highlight")
+          .forEach((el) => {
+            el.classList.remove("premium-message-highlight");
+          });
         document.querySelectorAll(".search-highlight-pulse").forEach((el) => {
           el.classList.remove(
             "search-highlight-pulse",
@@ -357,7 +434,8 @@ export function MessageFeed({
     if (searchResults.length === 0) return;
     // Go to previous match sequentially (decrements index: 3 -> 2 -> 1)
     setCurrentSearchIndex((prevIdx) => {
-      const nextIdx = (prevIdx - 1 + searchResults.length) % searchResults.length;
+      const nextIdx =
+        (prevIdx - 1 + searchResults.length) % searchResults.length;
       jumpToMessage(searchResults[nextIdx]);
       return nextIdx;
     });
@@ -421,6 +499,19 @@ export function MessageFeed({
     }
   }, [messages.length]); // Only depend on message length changes
 
+  // Auto-scroll to bottom on agent streaming
+  useEffect(() => {
+    if (atBottom && (showKayaTemp || showHarryTemp)) {
+      bottomRef.current?.scrollIntoView({ behavior: "auto" });
+    }
+  }, [
+    kayaStreamingText,
+    harryStreamingText,
+    showKayaTemp,
+    showHarryTemp,
+    atBottom,
+  ]);
+
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     if (isAutoScrolling.current) return;
 
@@ -457,15 +548,39 @@ export function MessageFeed({
   }, [loading, messages.length]);
 
   const handleSend = async (content: string, poll?: any) => {
+    const parentId = replyingTo?.id || null;
+    setReplyingTo(null);
+
     await sendMessage(
       content,
       currentUserId,
       currentUserName,
       currentUserImage,
-      replyingTo?.id,
+      parentId || undefined,
       poll,
     );
-    setReplyingTo(null);
+
+    const contentLower = content.toLowerCase();
+    const mentionsKaya = contentLower.includes("@kaya");
+    const mentionsHarry = contentLower.includes("@harry");
+
+    if (mentionsKaya) {
+      await kayaAgent.sendMessage(
+        content,
+        channel!.id,
+        parentId,
+        messages,
+        currentUserName,
+      );
+    } else if (mentionsHarry) {
+      await harryAgent.sendMessage(
+        content,
+        channel!.id,
+        parentId,
+        messages,
+        currentUserName,
+      );
+    }
   };
 
   const isAnnouncement = channel?.type === "announcement";
@@ -499,7 +614,6 @@ export function MessageFeed({
       {/* Channel header */}
       <div className="flex items-center justify-between px-6 h-14 border-b border-border/80 flex-none bg-background/95 backdrop-blur z-10">
         <div className="flex items-center gap-3.5 min-w-0">
-
           <ChannelIcon className="h-4 w-4 text-primary" />
 
           <div className="flex flex-col min-w-0">
@@ -507,7 +621,9 @@ export function MessageFeed({
               <h2 className="font-semibold text-xl leading-tight text-foreground truncate tracking-tight capitalize">
                 {channel.name}
               </h2>
-              {isAnnouncement && <Lock className="h-4 w-4 text-muted-foreground" />}
+              {isAnnouncement && (
+                <Lock className="h-4 w-4 text-muted-foreground" />
+              )}
             </div>
             {channel.description && (
               <p className="text-[10px] text-muted-foreground line-clamp-1 truncate leading-tight mt-0.5 font-medium first-letter:uppercase">
@@ -521,7 +637,7 @@ export function MessageFeed({
           <TooltipProvider delayDuration={400}>
             <div className="flex items-center gap-3 text-muted-foreground">
               {/* Tickets popover */}
-              <Popover>
+              <Popover open={ticketsOpen} onOpenChange={setTicketsOpen}>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <PopoverTrigger asChild>
@@ -547,9 +663,19 @@ export function MessageFeed({
                       <TicketSlash className="h-4 w-4" />
                       <span className="text-sm font-semibold">Tickets</span>
                     </div>
-                    <span className="text-xs font-medium text-muted-foreground">
-                      {openTicketsCount} open / {tickets?.length || 0} total
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {openTicketsCount} open / {tickets?.length || 0} total
+                      </span>
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        className="h-6 w-6 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/40"
+                        onClick={() => setTicketsOpen(false)}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </div>
 
                   <ScrollArea className="h-[380px]">
@@ -560,7 +686,11 @@ export function MessageFeed({
                           No tickets created yet
                         </p>
                         <p className="text-xs text-muted-foreground/80 mt-1.5 leading-relaxed">
-                          Type <code className="bg-muted px-1.5 py-0.5 rounded text-primary font-bold">/</code> in the chat box to create a ticket.
+                          Type{" "}
+                          <code className="bg-muted px-1.5 py-0.5 rounded text-primary font-bold">
+                            /
+                          </code>{" "}
+                          in the chat box to create a ticket.
                         </p>
                       </div>
                     ) : (
@@ -569,75 +699,105 @@ export function MessageFeed({
                           <div
                             key={ticket._id}
                             className={cn(
-                              "group relative border border-border/30 rounded-lg p-2.5 bg-muted/40 hover:bg-accent/10 transition-all duration-200",
-                              ticket.status !== "open" && "opacity-60"
+                              "group relative border border-border rounded-lg p-3.5 bg-muted/30 hover:bg-muted/60 transition-all duration-200",
                             )}
                           >
-                            <div className="flex items-center justify-between gap-2 mb-1.5">
-                              <span className={cn(
-                                "text-[8px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider",
-                                ticket.status === "open" ? "bg-emerald-500/10 text-emerald-500" : "bg-muted-foreground/15 text-muted-foreground"
-                              )}>
-                                {ticket.status}
-                              </span>
-                              <span className="text-[9px] text-muted-foreground">
-                                {format(new Date(ticket.createdAt), "MMM d, h:mm a")}
-                              </span>
-                            </div>
-
-                            <p className="text-xs text-foreground leading-relaxed break-words mb-2 pr-10">
-                              {ticket.body}
-                            </p>
-
-                            <div className="flex items-center justify-between pt-2 border-t border-border/20 text-[9px]">
-                              <div className="flex items-center gap-1">
-                                <span className="text-muted-foreground/80">Assignee:</span>
-                                <div className="flex items-center gap-1 truncate max-w-[100px]">
-                                  <Avatar className="h-3.5 w-3.5">
-                                    <AvatarImage src={ticket.assignee?.avatar ?? undefined} />
-                                    <AvatarFallback className="text-[7px] bg-primary/10 text-primary font-bold">
-                                      {(ticket.assignee?.name || "??").substring(0, 2).toUpperCase()}
-                                    </AvatarFallback>
-                                  </Avatar>
-                                  <span className="font-semibold text-foreground/90 truncate">{ticket.assignee?.name || "Unassigned"}</span>
+                            {/* Top Row: Status badge and Close/Reopen button */}
+                            <div className="flex items-center justify-between gap-4 mb-2">
+                              <div className="flex items-center gap-4">
+                                <div className="flex items-center text-[10px] text-muted-foreground  font-medium">
+                                  <Timer className="h-3 w-3 mr-1" />{" "}
+                                  {format(
+                                    new Date(ticket.createdAt),
+                                    "MMM d, h:mm a",
+                                  )}
                                 </div>
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <span className="text-muted-foreground/80">Creator:</span>
-                                <div className="flex items-center gap-1 truncate max-w-[100px]">
-                                  <Avatar className="h-3.5 w-3.5">
-                                    <AvatarImage src={ticket.creator?.avatar ?? undefined} />
-                                    <AvatarFallback className="text-[7px] bg-primary/10 text-primary font-bold">
-                                      {(ticket.creator?.name || "??").substring(0, 2).toUpperCase()}
-                                    </AvatarFallback>
-                                  </Avatar>
-                                  <span className="font-semibold text-foreground/90 truncate">{ticket.creator?.name || "Unknown"}</span>
-                                </div>
-                              </div>
-                            </div>
 
-                            {/* Ticket action to close/reopen */}
-                            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <span
+                                  className={cn(
+                                    "text-[9px] font-medium px-3 py-0.5 rounded-full border uppercase tracking-wider",
+                                    ticket.status === "open"
+                                      ? "bg-emerald-500/10 text-emerald-500"
+                                      : "bg-muted-foreground/15 text-muted-foreground",
+                                  )}
+                                >
+                                  {ticket.status}
+                                </span>
+                              </div>
+
                               <Button
                                 size="sm"
-                                variant="ghost"
-                                className="h-5 px-1.5 text-[9px] font-bold text-muted-foreground hover:text-foreground hover:bg-accent/40 rounded transition-all"
+                                variant="outline"
+                                className="h-5 px-2 text-[9px] font-semibold text-muted-foreground hover:text-foreground hover:bg-accent/40 rounded border border-border/40 transition-all"
                                 onClick={async () => {
                                   try {
-                                    const nextStatus = ticket.status === "open" ? "closed" : "open";
+                                    const nextStatus =
+                                      ticket.status === "open"
+                                        ? "closed"
+                                        : "open";
                                     await updateTicketStatusMutation({
                                       ticketId: ticket._id,
                                       status: nextStatus,
                                     });
-                                    toast.success(`Ticket marked as ${nextStatus}`);
+                                    toast.success(
+                                      `Ticket marked as ${nextStatus}`,
+                                    );
                                   } catch (err) {
-                                    console.error("Failed to update ticket status:", err);
+                                    console.error(
+                                      "Failed to update ticket status:",
+                                      err,
+                                    );
                                     toast.error("Failed to update ticket");
                                   }
                                 }}
                               >
                                 {ticket.status === "open" ? "Close" : "Reopen"}
                               </Button>
+                            </div>
+
+                            {/* Description/body below the date */}
+                            <p className="text-xs text-foreground leading-relaxed break-words mb-3">
+                              {ticket.body}
+                            </p>
+
+                            {/* Assignee & Creator below the description */}
+                            <div className="flex items-center justify-between pt-2.5 border-t border-border/20 text-xs">
+                              <div className="flex items-center gap-1">
+                                <span className="text-muted-foreground">
+                                  Assignee:
+                                </span>
+                                <div className="flex items-center gap-1 truncate max-w-[100px]">
+                                  <Avatar className="h-5 w-5">
+                                    <AvatarImage
+                                      src={ticket.assignee?.avatar ?? undefined}
+                                    />
+                                    <AvatarFallback className="text-[7px] bg-primary/10 text-primary font-bold">
+                                      {(ticket.assignee?.name || "??")
+                                        .substring(0, 2)
+                                        .toUpperCase()}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  {/* <span className="font-semibold text-foreground/90 truncate">{ticket.assignee?.name || "Unassigned"}</span> */}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <span className="text-muted-foreground">
+                                  Creator:
+                                </span>
+                                <div className="flex items-center gap-1 truncate max-w-[100px]">
+                                  <Avatar className="h-5 w-5">
+                                    <AvatarImage
+                                      src={ticket.creator?.avatar ?? undefined}
+                                    />
+                                    <AvatarFallback className="text-[7px] bg-primary/10 text-primary font-bold">
+                                      {(ticket.creator?.name || "??")
+                                        .substring(0, 2)
+                                        .toUpperCase()}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  {/* <span className="font-semibold text-foreground/90 truncate">{ticket.creator?.name || "Unknown"}</span> */}
+                                </div>
+                              </div>
                             </div>
                           </div>
                         ))}
@@ -675,12 +835,9 @@ export function MessageFeed({
                 >
                   <div className="flex items-center justify-between px-4 py-3 bg-muted/30 border-b border-border/50">
                     <div className="flex items-center gap-2.5">
-
                       <Pin className="h-4 w-4" />
 
-                      <span className="text-sm">
-                        Pins
-                      </span>
+                      <span className="text-sm">Pins</span>
                     </div>
 
                     <span className="text-xs font-medium text-muted-foreground">
@@ -691,7 +848,6 @@ export function MessageFeed({
                   <ScrollArea className="h-[380px]">
                     {pinnedMessages.length === 0 ? (
                       <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
-
                         <Pin className="h-8 w-8 text-muted-foreground" />
 
                         <p className="text-sm text-foreground">
@@ -943,16 +1099,21 @@ export function MessageFeed({
                   highlightTerm={searchQuery}
                   projectMembers={projectMembers}
                   channelReads={channelReads}
+                  repoFullName={project?.repoFullName}
                 />
               );
             })}
-            
+
             {/* Optimistic Media Uploads */}
-            {optimisticUploads.map(upload => {
+            {optimisticUploads.map((upload) => {
               const isImage = upload.file.type.startsWith("image/");
-              const mdLink = isImage ? `![${upload.file.name}](${upload.previewUrl})` : `[${upload.file.name}](${upload.previewUrl})`;
-              const msgContent = upload.caption ? `${mdLink}\n\n${upload.caption}` : mdLink;
-              
+              const mdLink = isImage
+                ? `![${upload.file.name}](${upload.previewUrl})`
+                : `[${upload.file.name}](${upload.previewUrl})`;
+              const msgContent = upload.caption
+                ? `${mdLink}\n\n${upload.caption}`
+                : mdLink;
+
               const msg: Message = {
                 id: upload.id,
                 channel_id: channel!.id,
@@ -984,10 +1145,85 @@ export function MessageFeed({
                   onEditPoll={async () => {}}
                   projectMembers={projectMembers}
                   channelReads={channelReads}
+                  repoFullName={project?.repoFullName}
                 />
               );
             })}
-            
+
+            {showKayaTemp && (
+              <MessageItem
+                key="temp-kaya-streaming"
+                // @ts-ignore
+                message={{
+                  id: "temp-kaya-streaming",
+                  channel_id: channel!.id,
+                  project_id: projectId,
+                  user_id: "kaya",
+                  user_name: "Kaya",
+                  user_image: "/kaya.svg",
+                  content: getTempMsgContent(
+                    "kaya",
+                    kayaAssistantMsg,
+                    kayaToolStatus,
+                  ),
+                  created_at: Date.now(),
+                  reactions: [],
+                  thread_parent_id: replyingTo?.id || null,
+                }}
+                isGrouped={false}
+                currentUserId={currentUserId}
+                isPinned={false}
+                canModerateAll={false}
+                onReply={() => {}}
+                onEdit={async () => {}}
+                onDelete={async () => {}}
+                onReact={async () => {}}
+                onPin={() => {}}
+                onPollVote={async () => {}}
+                onEditPoll={async () => {}}
+                projectMembers={projectMembers}
+                channelReads={channelReads}
+                repoFullName={project?.repoFullName}
+              />
+            )}
+
+            {showHarryTemp && (
+              <MessageItem
+                key="temp-harry-streaming"
+                // @ts-ignore
+                message={{
+                  id: "temp-harry-streaming",
+                  channel_id: channel!.id,
+                  project_id: projectId,
+                  user_id: "harry",
+                  user_name: "Harry",
+                  user_image: "/harry.svg",
+                  content: getTempMsgContent(
+                    "harry",
+                    harryAssistantMsg,
+                    harryToolStatus,
+                  ),
+                  created_at: Date.now(),
+                  reactions: [],
+                  thread_parent_id: replyingTo?.id || null,
+                }}
+                isGrouped={false}
+                currentUserId={currentUserId}
+                isPinned={false}
+                canModerateAll={false}
+                onReply={() => {}}
+                onEdit={async () => {}}
+                onDelete={async () => {}}
+                onReact={async () => {}}
+                onPin={() => {}}
+                onPollVote={async () => {}}
+                onEditPoll={async () => {}}
+                projectMembers={projectMembers}
+                channelReads={channelReads}
+                repoFullName={project?.repoFullName}
+              />
+            )}
+
             <div ref={bottomRef} />
           </div>
         )}

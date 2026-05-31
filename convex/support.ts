@@ -1,5 +1,6 @@
-import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { mutation, query } from "./_generated/server";
+import { CallTracker } from "assert";
 
 export const createSupportQuery = mutation({
   args: {
@@ -36,12 +37,29 @@ export const createSupportQuery = mutation({
   },
 });
 
-// Called by the AI chatbot — accepts userId directly (no Clerk session)
+// -----------------------------------
+// AI Call 
+// -----------------------------------
+export const getSupportQueriesForUser = query({
+  args: {
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("supportQueries")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+  },
+});
+
+// ----------------------------
+// AI CALL
+// ----------------------------
 export const createQueryByAi = mutation({
   args: {
     userId: v.id("users"),
-    title: v.string(),
     category: v.string(),
+    title: v.string(),
     description: v.string(),
   },
   handler: async (ctx, args) => {
@@ -61,21 +79,14 @@ export const createQueryByAi = mutation({
 
       return { success: true };
     } catch (error) {
-      return { success: false, error: String(error) };
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Failed to create support query";
+      return {
+        success: false,
+        error: errorMessage,
+      };
     }
-  },
-});
-
-// Fetch all support queries for a given user (used by AI chatbot)
-export const getSupportQueriesForUser = query({
-  args: {
-    userId: v.id("users"),
-  },
-  handler: async (ctx, args) => {
-    return await ctx.db
-      .query("supportQueries")
-      .withIndex("by_user", (q) => q.eq("userId", args.userId))
-      .order("desc")
-      .collect();
   },
 });

@@ -24,6 +24,9 @@ export default defineSchema({
     hasSeenWelcome: v.optional(v.boolean()),
     gettingstartedcompleted: v.optional(v.boolean()),
     hasSeenGettingStartedComplete: v.optional(v.boolean()),
+    referalUsing: v.optional(v.string()),
+    referalCreated: v.optional(v.string()),
+    heardFrom: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
     planExpiry: v.optional(v.number()), // For temporary upgrades/coupons
@@ -47,7 +50,8 @@ export default defineSchema({
     .index("by_accountType", ["accountType"])
     .index("by_name", ["name"])
     .index("by_subscriptionId", ["subscriptionId"])
-    .index("by_customerId", ["customerId"]),
+    .index("by_customerId", ["customerId"])
+    .index("by_referalCreated", ["referalCreated"]),
   // ---------------------------------------------
 
   repositories: defineTable({
@@ -149,6 +153,7 @@ export default defineSchema({
     userImage: v.optional(v.string()),
     message: v.optional(v.string()),
     source: v.union(v.literal("invited"), v.literal("manual")),
+    role: v.optional(v.union(v.literal("admin"), v.literal("member"))),
     status: v.union(
       v.literal("pending"),
       v.literal("accepted"),
