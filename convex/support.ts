@@ -1,4 +1,4 @@
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
 export const createSupportQuery = mutation({
@@ -33,5 +33,49 @@ export const createSupportQuery = mutation({
     });
 
     return queryId;
+  },
+});
+
+// Called by the AI chatbot — accepts userId directly (no Clerk session)
+export const createQueryByAi = mutation({
+  args: {
+    userId: v.id("users"),
+    title: v.string(),
+    category: v.string(),
+    description: v.string(),
+  },
+  handler: async (ctx, args) => {
+    try {
+      const user = await ctx.db.get(args.userId);
+      if (!user) {
+        return { success: false, error: "User not found" };
+      }
+
+      await ctx.db.insert("supportQueries", {
+        title: args.title,
+        reason: args.category,
+        description: args.description,
+        createdAt: Date.now(),
+        userId: args.userId,
+      });
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  },
+});
+
+// Fetch all support queries for a given user (used by AI chatbot)
+export const getSupportQueriesForUser = query({
+  args: {
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("supportQueries")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .order("desc")
+      .collect();
   },
 });
