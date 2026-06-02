@@ -1,10 +1,9 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalMutation, action } from "./_generated/server";
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 
-
-export const updatePlanServerSide = mutation({
+export const updatePlanServerSideInternal = internalMutation({
   args: {
-    backendSecret: v.string(),
     userId: v.string(),
     plan: v.union(v.literal("free"), v.literal("plus"), v.literal("pro")),
     subscriptionId: v.optional(v.string()),
@@ -13,14 +12,7 @@ export const updatePlanServerSide = mutation({
     currentPeriodEnd: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    // Validate secret
-    const secret = process.env.BACKEND_SECRET;
-    if (!secret || args.backendSecret !== secret) {
-      throw new Error("Unauthorized backend request");
-    }
-
     // Update user plan
-    // We get userId as string from Stripe webhook, we need to cast it
     const normalizedUserId = ctx.db.normalizeId("users", args.userId);
     if (!normalizedUserId) {
       throw new Error("Invalid user ID");
@@ -28,9 +20,9 @@ export const updatePlanServerSide = mutation({
 
     const user = await ctx.db.get(normalizedUserId);
     
-    // Only upgrade the plan if the subscription is active or in trial
+    // Only upgrade the plan if the subscription is active or in trial (or similar active status in Lemon Squeezy)
     let newPlan = args.plan;
-    if (args.status !== "active" && args.status !== "trialing") {
+    if (args.status !== "active" && args.status !== "on_trial" && args.status !== "trialing") {
       newPlan = user?.accountType || "free";
     }
 
@@ -39,7 +31,7 @@ export const updatePlanServerSide = mutation({
       subscriptionId: args.subscriptionId,
       customerId: args.customerId,
       subscriptionStatus: args.status,
-      subscriptionProvider: "stripe",
+      subscriptionProvider: "lemonsqueezy",
       currentPeriodEnd: args.currentPeriodEnd,
       cancelAtPeriodEnd: false, // Reset this so the UI doesn't think the new plan is cancelling
       updatedAt: Date.now(),
@@ -49,9 +41,8 @@ export const updatePlanServerSide = mutation({
   },
 });
 
-export const handleSubscriptionUpdate = mutation({
+export const handleSubscriptionUpdateInternal = internalMutation({
   args: {
-    backendSecret: v.string(),
     subscriptionId: v.string(),
     customerId: v.string(),
     status: v.string(),
@@ -59,13 +50,7 @@ export const handleSubscriptionUpdate = mutation({
     cancelAtPeriodEnd: v.boolean(),
   },
   handler: async (ctx, args) => {
-    // Validate secret
-    const secret = process.env.BACKEND_SECRET;
-    if (!secret || args.backendSecret !== secret) {
-      throw new Error("Unauthorized backend request");
-    }
-
-    // Find the user with this customerId or subscriptionId
+    // Find the user with this subscriptionId or customerId
     let user = await ctx.db
       .query("users")
       .withIndex("by_subscriptionId", (q) => q.eq("subscriptionId", args.subscriptionId))
@@ -79,17 +64,12 @@ export const handleSubscriptionUpdate = mutation({
     }
 
     if (!user) {
-      throw new Error(`[Stripe Webhook] User not found for customerId: ${args.customerId}`);
+      throw new Error(`[Lemon Squeezy Webhook] User not found for customerId: ${args.customerId} or subscriptionId: ${args.subscriptionId}`);
     }
 
-    // Determine plan type. If canceled, they usually drop to free at the end of the period
-    // but here we just update status and let them stay "pro" or "plus" until `currentPeriodEnd`.
-    // In actual implementation, a cron job or a check on the `accountType` would downgrade them 
-    // when `currentPeriodEnd` is reached.
-
-    // For now, if status is "canceled" or "past_due" and currentPeriodEnd is in the past, downgrade them immediately.
+    // Determine plan type. If canceled/expired, they drop to free.
     let newPlan = user.accountType;
-    if (args.status === "canceled" || args.status === "unpaid") {
+    if (args.status === "cancelled" || args.status === "expired" || args.status === "unpaid") {
       newPlan = "free";
     }
 
@@ -105,8 +85,64 @@ export const handleSubscriptionUpdate = mutation({
   },
 });
 
+export const updatePlanServerSide = action({
+  args: {
+    backendSecret: v.string(),
+    userId: v.string(),
+    plan: v.union(v.literal("free"), v.literal("plus"), v.literal("pro")),
+    subscriptionId: v.optional(v.string()),
+    customerId: v.optional(v.string()),
+    status: v.string(),
+    currentPeriodEnd: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<{ success: boolean }> => {
+    // Validate secret
+    const secret = process.env.BACKEND_SECRET;
+    if (!secret || args.backendSecret !== secret) {
+      throw new Error("Unauthorized backend request");
+    }
+
+    await ctx.runMutation((internal.lemonsqueezy as any).updatePlanServerSideInternal, {
+      userId: args.userId,
+      plan: args.plan,
+      subscriptionId: args.subscriptionId,
+      customerId: args.customerId,
+      status: args.status,
+      currentPeriodEnd: args.currentPeriodEnd,
+    });
+
+    return { success: true };
+  },
+});
+
+export const handleSubscriptionUpdate = action({
+  args: {
+    backendSecret: v.string(),
+    subscriptionId: v.string(),
+    customerId: v.string(),
+    status: v.string(),
+    currentPeriodEnd: v.number(),
+    cancelAtPeriodEnd: v.boolean(),
+  },
+  handler: async (ctx, args): Promise<{ success: boolean }> => {
+    // Validate secret
+    const secret = process.env.BACKEND_SECRET;
+    if (!secret || args.backendSecret !== secret) {
+      throw new Error("Unauthorized backend request");
+    }
+
+    return await ctx.runMutation((internal.lemonsqueezy as any).handleSubscriptionUpdateInternal, {
+      subscriptionId: args.subscriptionId,
+      customerId: args.customerId,
+      status: args.status,
+      currentPeriodEnd: args.currentPeriodEnd,
+      cancelAtPeriodEnd: args.cancelAtPeriodEnd,
+    });
+  },
+});
+
 /**
- * Server-only: verifies that a given Stripe customerId belongs to the authenticated Clerk user.
+ * Server-only: verifies that a given Lemon Squeezy customerId belongs to the authenticated Clerk user.
  * Used by the billing portal route to prevent one user from accessing another user's billing portal.
  */
 export const verifyCustomerOwner = query({

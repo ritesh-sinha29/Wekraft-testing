@@ -21,21 +21,20 @@ export default defineSchema({
     hasCompletedOnboarding: v.boolean(),
     primaryUsage: v.optional(v.array(v.string())),
     hasVisitedWorkspace: v.optional(v.boolean()),
+    hasCompletedInviteStep: v.optional(v.boolean()),
     hasSeenWelcome: v.optional(v.boolean()),
     gettingstartedcompleted: v.optional(v.boolean()),
     hasSeenGettingStartedComplete: v.optional(v.boolean()),
-    referalUsing: v.optional(v.string()),
-    referalCreated: v.optional(v.string()),
     heardFrom: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
-    planExpiry: v.optional(v.number()), // For temporary upgrades/coupons
+    planExpiry: v.optional(v.union(v.null(), v.number())), // For temporary upgrades/coupons
 
     // Subscription Data
     subscriptionId: v.optional(v.string()),
     customerId: v.optional(v.string()),
     subscriptionStatus: v.optional(v.string()), // "active", "past_due", "cancelled", etc.
-    subscriptionProvider: v.optional(v.string()), // "razorpay" | "stripe"
+    subscriptionProvider: v.optional(v.string()), // "razorpay"
     currentPeriodEnd: v.optional(v.number()), // Unix timestamp in ms
     cancelAtPeriodEnd: v.optional(v.boolean()),
 
@@ -50,10 +49,21 @@ export default defineSchema({
     .index("by_accountType", ["accountType"])
     .index("by_name", ["name"])
     .index("by_subscriptionId", ["subscriptionId"])
-    .index("by_customerId", ["customerId"])
-    .index("by_referalCreated", ["referalCreated"]),
+    .index("by_customerId", ["customerId"]),
   // ---------------------------------------------
 
+  // -------------------User Details----------------
+  userDetails: defineTable({
+    userId: v.id("users"),
+    freeTrialUsed: v.boolean(),
+    referalUsing: v.optional(v.string()),
+    referalCreated: v.optional(v.string()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_referalCreated", ["referalCreated"])
+    .index("by_referalUsing", ["referalUsing"]),
+
+  // --------------------------------------------
   repositories: defineTable({
     githubId: v.int64(),
     isWebhookConnected: v.boolean(), // default false
@@ -507,4 +517,5 @@ export default defineSchema({
   })
     .index("by_user", ["userId"])
     .index("by_created", ["createdAt"]),
+
 });

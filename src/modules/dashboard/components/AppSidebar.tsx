@@ -57,17 +57,12 @@ import {
   Plus,
   Settings2,
   SparklesIcon,
-  Star,
   Stars,
   Store,
   Sun,
   User,
   User2,
-  UserPlus,
   Users,
-  Wallet,
-  Check,
-  Copy,
 } from "lucide-react";
 
 import {
@@ -91,13 +86,7 @@ import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import CreateProjectDialog from "@/modules/project/CreateProjectDialog";
 import { HelpSupportDialog } from "@/modules/dashboard/components/HelpSupportDialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { ReferralDialog } from "@/modules/dashboard/components/ReferralDialog";
 
 export const AppSidebar = () => {
   const { theme, setTheme } = useTheme();
@@ -109,19 +98,16 @@ export const AppSidebar = () => {
   const user: Doc<"users"> | undefined | null = useQuery(
     api.user.getCurrentUser,
   );
-
   const [isHelpOpen, setIsHelpOpen] = useState(false);
-  const [isReferralOpen, setIsReferralOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
 
-  const handleCopyReferral = () => {
-    if (user?.referalCreated) {
-      navigator.clipboard.writeText(user.referalCreated);
-      setCopied(true);
-      toast.success("Referral code copied to clipboard!");
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
+  // Bug fix: planExpiry may have passed but DB hasn't been updated yet by cron.
+  // Compute effective plan client-side so the sidebar shows "free" immediately
+  // after a trial expires, rather than waiting up to 24h for the cron to run.
+  const effectivePlan = (() => {
+    if (!user) return "free";
+    const isExpired = user.planExpiry !== undefined && user.planExpiry !== null && user.planExpiry < Date.now();
+    return isExpired ? "free" : (user.accountType || "free");
+  })();
 
   const ownerProjects = useQuery(api.project.getUserProjects);
   const teamProjects = useQuery(api.project.getJoinedProjects);
@@ -393,7 +379,7 @@ export const AppSidebar = () => {
                             </Link>
                           ))}
                         </div>
-                        <CreateProjectDialog 
+                        <CreateProjectDialog
                           trigger={
                             <Button
                               size="sm"
@@ -505,6 +491,21 @@ export const AppSidebar = () => {
             <span className="w-10 h-px bg-muted-foreground/30"></span>
           </div>
 
+          {/* My Referral */}
+          <SidebarMenuButton
+            tooltip="My Referral"
+            onClick={() => window.dispatchEvent(new CustomEvent("open-referral-dialog"))}
+            className="group relative overflow-hidden cursor-pointer"
+          >
+            <div className="relative z-10 flex items-center gap-3 w-full group-data-[collapsible=icon]:justify-center">
+              <Gift className="h-5 w-5" />
+              <span className="text-sm group-data-[collapsible=icon]:hidden font-medium">
+                My Referral
+              </span>
+            </div>
+          </SidebarMenuButton>
+
+
           {/* 6 */}
           <SidebarMenuButton
             asChild
@@ -545,19 +546,6 @@ export const AppSidebar = () => {
             </div>
           </SidebarMenuButton>
 
-          {/* My Referral */}
-          <SidebarMenuButton
-            tooltip="My Referral"
-            onClick={() => setIsReferralOpen(true)}
-            className="group relative overflow-hidden cursor-pointer"
-          >
-            <div className="relative z-10 flex items-center gap-3 w-full group-data-[collapsible=icon]:justify-center">
-              <Gift className="h-5 w-5" />
-              <span className="text-sm group-data-[collapsible=icon]:hidden font-medium">
-                My Referral
-              </span>
-            </div>
-          </SidebarMenuButton>
 
         </SidebarMenu>
       </SidebarContent>
@@ -573,24 +561,24 @@ export const AppSidebar = () => {
                 <div className="flex flex-col">
                   <h3 className="text-sm font-medium">Current Plan</h3>
                   <p className="text-xs text-muted-foreground capitalize">
-                    {user.accountType || "Free"}
+                    {effectivePlan}
                   </p>
                 </div>
               </div>
               <p className="text-[11px] text-muted-foreground text-left my-1.5 leading-relaxed">
-                {user.accountType === "pro"
+                {effectivePlan === "pro"
                   ? "You have full access to all premium features."
-                  : user.accountType === "plus"
+                  : effectivePlan === "plus"
                     ? "Upgrade to Pro to unlock Kaya and Other AI features."
                     : "Upgrade to Plus to unlock AI and boost your productivity."}
               </p>
-              {user.accountType !== "pro" && (
+              {effectivePlan !== "pro" && (
                 <Link href="/web/pricing">
                   <Button
                     className="text-[10px] cursor-pointer w-full my-1.5 font-medium"
                     size="xs"
                   >
-                    {user.accountType === "plus"
+                    {effectivePlan === "plus"
                       ? "Upgrade to Pro"
                       : "Upgrade Now"}
                   </Button>
@@ -598,7 +586,7 @@ export const AppSidebar = () => {
               )}
             </div>
 
-            {user.accountType === "pro" && (
+            {effectivePlan === "pro" && (
               <div className="flex items-center gap-3 p-2 rounded-md border border-accent bg-muted transition-all cursor-pointer group">
                 <Avatar className="h-8 w-8 shrink-0 border border-primary/20">
                   <AvatarImage src={user.avatarUrl} />
@@ -680,47 +668,7 @@ export const AppSidebar = () => {
         )}
       </SidebarFooter>
       <HelpSupportDialog open={isHelpOpen} onOpenChange={setIsHelpOpen} />
-
-      <Dialog open={isReferralOpen} onOpenChange={setIsReferralOpen}>
-        <DialogContent className="sm:max-w-md bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl p-6 font-sans">
-          <DialogHeader className="space-y-1">
-            <DialogTitle className="text-xl font-bold text-white flex items-center gap-2">
-              <Gift className="h-5 w-5 text-blue-500 shrink-0" />
-              My Referral
-            </DialogTitle>
-            <DialogDescription className="text-xs text-zinc-400 leading-relaxed">
-              copy and share with others , once they signed up u can have a achnage to get paid. leanr more -{">"}{" "}
-              <Link
-                href="/docs"
-                className="text-blue-500 hover:underline inline-flex"
-                onClick={() => setIsReferralOpen(false)}
-              >
-                docs.
-              </Link>
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-4 mt-4">
-            <div className="flex items-center gap-2 bg-[#0f0f12] border border-zinc-800 rounded-lg p-2.5">
-              <span className="flex-1 font-mono text-sm tracking-wider text-zinc-200 select-all px-1">
-                {user?.referalCreated || "Generating..."}
-              </span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8 p-0 hover:bg-zinc-900 transition-colors shrink-0"
-                onClick={handleCopyReferral}
-                disabled={!user?.referalCreated}
-              >
-                {copied ? (
-                  <Check className="h-4 w-4 text-emerald-500" />
-                ) : (
-                  <Copy className="h-4 w-4 text-zinc-400" />
-                )}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ReferralDialog />
     </Sidebar>
   );
 };

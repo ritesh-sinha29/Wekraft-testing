@@ -135,16 +135,14 @@ export const STEPS: StepConfig[] = [
   },
   {
     id: 7,
-    icon: Puzzle,
-    label: "Install the VS Code extension",
-    hint: "Manage tasks without leaving your editor",
+    icon: Sparkles,
+    label: "Unlock your free trial (no charges)",
+    hint: "Absolutely free for 1 week, upgrade to plus",
     description:
-      "The Wekraft VS Code extension lets you view tasks, log time, and push updates to your project — all inside your editor.",
-    cta: "Installed",
+      "Use your 1 free trial. It has no charges, is absolutely free for 1 week, and lets you experience the Plus plan features.",
+    cta: "Unlock Trial",
     action: (router, context) => {
-      if (context?.markExtensionInstalled) {
-        context.markExtensionInstalled();
-      }
+      window.dispatchEvent(new CustomEvent("open-free-trial-dialog"));
     },
   },
 ];
@@ -158,32 +156,27 @@ export function GettingStartedChecklist() {
   const router = useRouter();
   const [expandedStep, setExpandedStep] = useState<number | null>(-1);
 
-  const [extensionInstalled, setExtensionInstalled] = useState(false);
-
-  useEffect(() => {
-    const handleExtensionInstalledEvent = () => {
-      setExtensionInstalled(true);
-    };
-    window.addEventListener('mark-extension-installed', handleExtensionInstalledEvent);
-    return () => window.removeEventListener('mark-extension-installed', handleExtensionInstalledEvent);
-  }, []);
-
-  const handleMarkExtensionInstalled = () => {
-    setExtensionInstalled(true);
-    window.dispatchEvent(new CustomEvent('mark-extension-installed'));
-  };
+  const userDetails = useQuery(api.user.getUserDetails);
 
   const completedIds = useMemo(() => [
     ...(progressData?.completedSteps ?? []),
-    ...(extensionInstalled ? [7] : [])
-  ], [progressData?.completedSteps, extensionInstalled]);
+    ...(userDetails?.freeTrialUsed ? [7] : [])
+  ], [progressData?.completedSteps, userDetails?.freeTrialUsed]);
 
-  // Auto-mark completed in DB if all steps finished locally
+  // The first 6 steps are required. Step 7 (free trial) is optional/bonus —
+  // skipping it should NOT block gettingstartedcompleted from being set in the DB.
+  // This fixes a bug where referred users who skipped the trial were never counted
+  // toward the referrer's referral reward (getReferralCount checks gettingstartedcompleted).
+  const REQUIRED_STEPS = STEPS.filter((s) => s.id !== 7).map((s) => s.id); // [1,2,3,4,5,6]
+  const requiredDone = REQUIRED_STEPS.every((id) => completedIds.includes(id));
+
+  // Auto-mark completed in DB when all required steps (1-6) are finished.
+  // Step 7 (free trial) is optional and does not block this.
   useEffect(() => {
-    if (currentUser && !currentUser.gettingstartedcompleted && completedIds.length >= 7) {
+    if (currentUser && !currentUser.gettingstartedcompleted && requiredDone) {
       completeGettingStarted().catch((err) => console.error("Error completing getting started checklist:", err));
     }
-  }, [currentUser, completedIds, completeGettingStarted]);
+  }, [currentUser, requiredDone, completeGettingStarted]);
 
   // Skeleton while Convex query loads
   if (progressData === undefined || currentUser === undefined) {
@@ -206,9 +199,6 @@ export function GettingStartedChecklist() {
       </div>
     );
   }
-
-  // Hide when fully done in DB
-  if (currentUser?.gettingstartedcompleted) return null;
 
   const totalDone = completedIds.length;
   const totalSteps = STEPS.length;
@@ -348,7 +338,6 @@ export function GettingStartedChecklist() {
                     onClick={() => {
                       step.action(router, {
                         projects: userProjects,
-                        markExtensionInstalled: handleMarkExtensionInstalled,
                       });
                       setExpandedStep(null);
                     }}
