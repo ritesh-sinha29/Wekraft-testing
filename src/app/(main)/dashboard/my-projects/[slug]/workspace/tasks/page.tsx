@@ -133,10 +133,11 @@ const TaskPage = () => {
   const isOwner = currentUser?._id === project?.ownerId;
   const userMember = members?.find((m) => m.userId === currentUser?._id);
   const isAdmin = userMember?.AccessRole === "admin";
+  const isViewer = userMember?.AccessRole === "viewer";
 
   const canCreate =
-    isOwner || isAdmin || projectDetails?.memberCanCreate !== false;
-  const canDelete = isOwner || isAdmin;
+    !isViewer && (isOwner || isAdmin || projectDetails?.memberCanCreate !== false);
+  const canDelete = !isViewer && (isOwner || isAdmin);
 
   const deleteTasks = useMutation(api.workspace.deleteTasks);
 
@@ -358,7 +359,7 @@ const TaskPage = () => {
             className="bg-linear-to-t from-indigo-600/30 via-purple-600/10 to-transparent text-xs cursor-pointer px-6!"
           >
             <Image src="/kaya.svg" alt="Kaya AI" width={18} height={18} />
-            View Breakdown
+            Automate Tasks
           </Button>
 
           <Button
@@ -454,6 +455,7 @@ const TaskPage = () => {
                   tasks={tasks || []}
                   projectId={project._id as Id<"projects">}
                   taskLimit={taskLimit}
+                  isViewer={isViewer}
                 />
               </div>
             )}

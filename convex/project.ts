@@ -511,12 +511,36 @@ export const getUnlinkedProjects = query({
 
     if (!user) return [];
 
-    const projects = await ctx.db
+    // Projects owned by the user
+    const ownedProjects = await ctx.db
       .query("projects")
       .withIndex("by_owner", (q) => q.eq("ownerId", user._id))
       .collect();
 
-    return projects.filter((p) => !p.repositoryId && !p.repoName);
+    // Projects where the user is a member with owner or admin role
+    const memberships = await ctx.db
+      .query("projectMembers")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .collect();
+
+    const memberProjects = [];
+    for (const membership of memberships) {
+      if (membership.AccessRole === "owner" || membership.AccessRole === "admin") {
+        const p = await ctx.db.get(membership.projectId);
+        if (p) memberProjects.push(p);
+      }
+    }
+
+    // Combine uniquely
+    const allProjects = [...ownedProjects];
+    const ownedIds = new Set(ownedProjects.map((p) => p._id));
+    for (const p of memberProjects) {
+      if (!ownedIds.has(p._id)) {
+        allProjects.push(p);
+      }
+    }
+
+    return allProjects.filter((p) => !p.repositoryId && !p.repoName);
   },
 });
 
@@ -554,7 +578,7 @@ export const createJoinRequest = mutation({
     projectId: v.id("projects"),
     message: v.optional(v.string()),
     source: v.union(v.literal("invited"), v.literal("manual")),
-    role: v.optional(v.union(v.literal("admin"), v.literal("member"))),
+    role: v.optional(v.union(v.literal("admin"), v.literal("member"), v.literal("viewer"))),
   },
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
@@ -1253,6 +1277,7 @@ export const getTeamPageData = query({
     let ownerCount = 0;
     let adminCount = 0;
     let memberCount = 0;
+    let viewerCount = 0;
 
     // 5. Enrich each member
     const enrichedMembers = await Promise.all(
@@ -1263,6 +1288,7 @@ export const getTeamPageData = query({
 
         if (role === "owner") ownerCount++;
         else if (role === "admin") adminCount++;
+        else if (role === "viewer") viewerCount++;
         else memberCount++;
 
         return {
@@ -1296,6 +1322,7 @@ export const getTeamPageData = query({
       ownerCount,
       adminCount,
       memberCount,
+      viewerCount,
       ownerPlan,
       memberLimit,
     };

@@ -1,27 +1,27 @@
 # Project Calendar
 
-The Wekraft Calendar provides a shared timeline of events, scheduled milestones, task deadlines, and sprint scopes across the entire project space.
+The WeKraft Calendar provides a shared timeline of events, scheduled milestones, task deadlines, and sprint scopes across the entire project space.
 
 ---
 
 ## Calendar Event Properties
 
-Every calendar entry is stored in Convex under the `calendarEvents` collection with these schema details:
+Every calendar entry has the following properties:
 
 - **Title**: The display name of the event or milestone checkpoint.
 - **Description** *(optional)*: Additional context or agenda details.
 - **Event Type**:
-  - `event`: Standard meetings, daily standups, or retrospective sessions.
-  - `milestone`: Critical checkpoints like release freezes, beta releases, or customer deliveries.
+  - Event: Standard meetings, daily standups, or retrospective sessions.
+  - Milestone: Critical checkpoints like release freezes, beta releases, or customer deliveries.
 - **All Day Option**: Toggles absolute day views, disabling the hour/minute selection.
-- **Duration**: Defined by Unix millisecond timestamps (`start` -> `end`).
-- **Color Overlay**: Custom hex color code for visual grouping on the calendar grid.
+- **Duration**: The time range representing when the event occurs.
+- **Color Overlay**: Custom color for visual grouping on the calendar grid.
 
 ---
 
 ## Workspace Integrations
 
-Wekraft merges calendar records with project boards to compile a single dashboard view:
+WeKraft merges calendar records with project boards to compile a single dashboard view:
 
 ### 1. Task Deadline Overlays
 Any active task with an `estimation.endDate` is automatically plotted on the calendar grid. The visual color corresponds to the task's state:

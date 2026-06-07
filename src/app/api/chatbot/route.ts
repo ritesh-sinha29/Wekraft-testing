@@ -26,7 +26,7 @@ import { z } from "zod";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { wekraftGuardrailMiddleware } from "@/lib/middleware/wekraft-guardrail";
-import { ratelimit } from "@/lib/rate-limit";
+import { chatbotRatelimit, chatbotGlobalRatelimit } from "@/lib/rate-limit";
 
 const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
@@ -59,7 +59,7 @@ const allTools = {
 
     createSupportQuery: tool({
         description:
-            "Create a new support query / ticket on behalf of the user. Call this when the user reports a bug, asks for help, or wants to raise an issue with Wekraft",
+            "Create a new support query / ticket on behalf of the user. Call this when the user reports a bug, asks for help, or wants to raise an issue with WeKraft",
         // @ts-ignore
         inputSchema: z.object({
             userId: z.string().describe("The Convex user ID raising the query"),
@@ -111,14 +111,14 @@ const allTools = {
             return {
                 success: true,
                 message:
-                    "Your support query has been logged successfully. The Wekraft team will review it and get back to you.",
+                    "Your support query has been logged successfully. The WeKraft team will review it and get back to you.",
             };
         },
     }),
 
     searchDocumentation: tool({
         description:
-            "Search the Wekraft documentation to find relevant pages and their slugs based on keywords or user query. Returns page titles, descriptions, and slugs.",
+            "Search the WeKraft documentation to find relevant pages and their slugs based on keywords or user query. Returns page titles, descriptions, and slugs.",
 
         inputSchema: z.object({
             query: z.string().describe("Keywords to search for in page titles and descriptions"),
@@ -207,7 +207,7 @@ const allTools = {
 
     getDocumentationPage: tool({
         description:
-            "Retrieve the raw markdown content of a specific Wekraft documentation page by its slug to get context about features, setups, flows, etc.",
+            "Retrieve the raw markdown content of a specific WeKraft documentation page by its slug to get context about features, setups, flows, etc.",
 
         inputSchema: z.object({
             slug: z.string().describe("The slug of the documentation page (e.g., 'getting-started', 'repositories', 'extension', 'sprints', 'kaya-pm')"),
@@ -215,6 +215,10 @@ const allTools = {
 
         execute: async ({ slug }: { slug: string }) => {
             console.log("-------- getDocumentationPage called for slug --------", slug);
+            const docInfo = allDocs.find((d) => d.slug === slug);
+            if (!docInfo) {
+                return { error: `Documentation page with slug '${slug}' not found.` };
+            }
             try {
                 const filePath = path.join(process.cwd(), "src/content/docs", `${slug}.md`);
                 if (fs.existsSync(filePath)) {
@@ -239,17 +243,17 @@ export type ChatbotTools = InferUITools<typeof allTools>;
 export type ChatbotMessage = UIMessage<never, UIDataTypes, ChatbotTools>;
 
 // -----------------------------------
-// System Prompt — Wekraft knowledge
+// System Prompt — WeKraft knowledge
 // -----------------------------------
 const SYSTEM_PROMPT = (userId: string) =>
     `
-You are the official AI support assistant for Wekraft (wekraft.xyz).
+You are the official AI support assistant for WeKraft (wekraft.xyz).
 You help user understand this platform or solve their any related query and can createQuiery if user wants to contact with wekraft support team.
 
-## About Wekraft
-Wekraft is an AI-powered project management platform for modern software teams.
+## About WeKraft
+WeKraft is an AI-powered project management platform for modern software teams.
 It unifies task tracking, sprint planning, team collaboration, and developer tooling
-(VS Code extension + Kaya AI) in a single workspace. Currently in private beta.
+(IDE extension + Kaya AI) in a single workspace. Currently in private beta.
 
 ## Core Concepts
 
@@ -277,12 +281,12 @@ One active sprint per project at a time. Incomplete items return to backlog on c
 - Kaya PM Agent: Built-in AI PM agent (Pro plan, 50 calls/month). Can plan sprints, analyse workloads, generate standups, and predict sprint risks.
 - Harry Dev Agent: Built-in AI senior developer agent (Pro plan). Can monitor the codebase, detect bugs, review pull requests, and perform autonomous web research.
 
-### VS Code Extension
+### IDE Extension
 Lets developers view/start/complete tasks and auto-log time without leaving their editor.
 Free/Plus: view only. Pro: full two-way sync.
 
 ### GitHub Integration
-Link a repo to sync GitHub Issues as Wekraft Issues. Commits/PRs visible in task timeline.
+Link a repo to sync GitHub Issues as WeKraft Issues. Commits/PRs visible in task timeline.
 
 
 ## Useful Links
@@ -295,9 +299,15 @@ Link a repo to sync GitHub Issues as Wekraft Issues. Commits/PRs visible in task
 - Be concise, professional, and helpful.
 - When the user reports a bug or issue, gather: category, and a clear description and form title by own.
 - When the user asks about their past raised quiries or support tickets, call getSupportQueries.
-- If a user asks questions about Wekraft's features, agents (like Kaya PM or Harry Dev), setup guides, navigation, options, billing, or pricing, use the searchDocumentation tool to find the relevant page slug, or call getDocumentationPage directly if you know the exact slug (e.g. 'getting-started', 'sprints', 'extension', 'kaya-pm', 'harry-dev'). Always read the documentation page to get accurate context before answering.
+- If a user asks questions about WeKraft's features, agents (like Kaya PM or Harry Dev), setup guides, navigation, options, billing, or pricing, use the searchDocumentation tool to find the relevant page slug, or call getDocumentationPage directly if you know the exact slug (e.g. 'getting-started', 'sprints', 'extension', 'kaya-pm', 'harry-dev'). Always read the documentation page to get accurate context before answering.
 - The current user's ID is: ${userId}
 - If you are unsure about something, direct the user to the docs or support@wekraft.xyz.
+
+## Strict Guardrails & Restrictions (VERY CRITICAL)
+- You are ONLY allowed to answer questions and resolve queries directly related to WeKraft.
+- You CANNOT write code or provide programming assistance in any language (e.g., Python, JavaScript, etc.). If a user asks you to write code, design an algorithm, write scripts, or explain programming concepts, you MUST strictly decline and say No.
+- You CANNOT answer questions about unrelated topics (such as general knowledge, history, math, science, etc.). If asked, you MUST strictly decline and say No.
+- Under all circumstances, if the request is not related to WeKraft or asks you to write code, say: "No, I am only programmed to assist with WeKraft support queries."
 `.trim();
 
 // -----------------------------------
@@ -317,10 +327,19 @@ export async function POST(req: Request) {
         console.log("Chatbot route hit — userId:", userId);
 
         // Strict rate limiting
+        // 1. Global Route Rate Limiting (Max 10 req/min across all users combined)
+        const { success: globalSuccess } = await chatbotGlobalRatelimit.limit("chatbot_global_limit");
+        if (!globalSuccess) {
+            return new Response("Service is busy. Please try again later.", {
+                status: 429,
+            });
+        }
+
+        // 2. Per-User Rate Limiting (Max 2 req/min per user/IP)
         const ip = req.headers.get("x-forwarded-for") || "127.0.0.1";
         const limitKey = userId ? `chatbot_rl_${userId}` : `chatbot_rl_ip_${ip}`;
 
-        const { success, limit, reset, remaining } = await ratelimit.limit(limitKey);
+        const { success, limit, reset, remaining } = await chatbotRatelimit.limit(limitKey);
         if (!success) {
             return new Response("Too many requests. Please try again later.", {
                 status: 429,

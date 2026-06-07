@@ -46,10 +46,10 @@ export default function CompareTable({ competitorName, competitorLogo, features 
     <div className="w-full font-sans text-neutral-100 py-16 relative z-10">
       <div className="text-center mb-12">
         <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-white mb-3">
-          Why do {competitorName} users migrate to Wekraft?
+          Why do {competitorName} users migrate to WeKraft?
         </h2>
         <p className="text-neutral-400 text-sm sm:text-base max-w-[600px] mx-auto">
-          An honest, feature-by-feature comparison of where Wekraft is built differently.
+          An honest, feature-by-feature comparison of where WeKraft is built differently.
         </p>
       </div>
 
@@ -62,7 +62,7 @@ export default function CompareTable({ competitorName, competitorLogo, features 
               </th>
               <th className="py-8 px-6 w-[35%] text-left">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 flex items-center justify-center bg-white/[0.03] border border-white/[0.08] rounded-xl p-1.5 shrink-0">
+                  <div className="w-8 h-8 flex items-center justify-center rounded-xl p-1.5 shrink-0">
                     <img src="/logo.svg" alt="WeKraft" className="w-5 h-5" />
                   </div>
                   <span className="text-lg md:text-xl font-bold text-white tracking-tight">WeKraft</span>
@@ -70,7 +70,7 @@ export default function CompareTable({ competitorName, competitorLogo, features 
               </th>
               <th className="py-8 px-6 w-[35%] text-left">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 flex items-center justify-center bg-white/[0.03] border border-white/[0.08] rounded-xl p-1.5 text-neutral-300 shrink-0">
+                  <div className="w-8 h-8 flex items-center justify-center rounded-xl p-1.5 text-neutral-300 shrink-0">
                     {React.isValidElement(competitorLogo) ? (
                       React.cloneElement(competitorLogo as React.ReactElement<any>, { className: "w-5 h-5 object-contain" })
                     ) : (
@@ -98,13 +98,13 @@ export default function CompareTable({ competitorName, competitorLogo, features 
                     <span className="text-[10px] text-neutral-500 font-mono tracking-widest uppercase mb-1.5 block">
                       {feature.category}
                     </span>
-                    <span className="text-white font-semibold text-[15px] leading-snug group-hover:text-blue-400 transition-colors">
+                    <span className="text-neutral-300 font-semibold text-[15px] leading-snug group-hover:text-white transition-colors">
                       {feature.name}
                     </span>
                   </div>
                 </td>
 
-                {/* Wekraft Column */}
+                {/* WeKraft Column */}
                 <td className="py-6 px-6 text-left align-top">
                   <div className="flex items-start gap-3.5 text-left h-full">
                     {renderStatusIcon(feature.wekraftStatus)}

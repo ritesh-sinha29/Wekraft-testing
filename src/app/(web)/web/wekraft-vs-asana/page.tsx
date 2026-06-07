@@ -1,7 +1,6 @@
 import React from "react";
 import { Metadata } from "next";
 import Navbar from "@/modules/web/Navbar";
-import CompareHero from "@/modules/web/compare/CompareHero";
 import CompareTable, { ComparisonFeature } from "@/modules/web/compare/CompareTable";
 import CompareFeatures from "@/modules/web/compare/CompareFeatures";
 
@@ -9,9 +8,15 @@ import CompareFAQ, { FAQItem } from "@/modules/web/compare/CompareFAQ";
 import { CheckCircle2, ArrowRight } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "Wekraft vs Asana | Built for Software Teams",
-  description: "Asana is good for general task templates, but lacks developer workflows. Compare Asana with Wekraft's VS Code sync, unified docs, and AI PM agents.",
+  title: {
+    absolute: "WeKraft vs Asana",
+  },
+  description: "Asana is good for general task templates, but lacks developer workflows. Compare Asana with WeKraft's VS Code sync, unified docs, and AI PM agents.",
+  alternates: {
+    canonical: "https://wekraft.xyz/web/wekraft-vs-asana",
+  },
 };
+
 
 const asanaFeatures: ComparisonFeature[] = [
   {
@@ -58,16 +63,16 @@ const asanaFeatures: ComparisonFeature[] = [
 
 const asanaFaqs: FAQItem[] = [
   {
-    question: "Why is Wekraft better for engineering teams than Asana?",
-    answer: "Asana is built for general task coordination across marketing, ops, and HR, which means it lacks specialized developer features. Wekraft is designed exclusively for software shipping. It provides VS Code handshake integrations, Git linkage, commit activity heatmaps, and native AI PM/Dev agents that automate ticketing and code editing.",
+    question: "Why is WeKraft better for engineering teams than Asana?",
+    answer: "Asana is built for general task coordination across marketing, ops, and HR, which means it lacks specialized developer features. WeKraft is designed exclusively for software shipping. It provides VS Code handshake integrations, Git linkage, commit activity heatmaps, and native AI PM/Dev agents that automate ticketing and code editing.",
   },
   {
     question: "Can we import our projects and task dependencies from Asana?",
-    answer: "Yes, Wekraft has an Asana Importer. Simply upload your Asana project JSON/CSV export, and our importer maps your task boards, cycles, milestones, dependencies, assignees, and descriptions automatically.",
+    answer: "Yes, WeKraft has an Asana Importer. Simply upload your Asana project JSON/CSV export, and our importer maps your task boards, cycles, milestones, dependencies, assignees, and descriptions automatically.",
   },
   {
-    question: "Is there a free tier for small teams starting with Wekraft?",
-    answer: "Yes! Wekraft offers a free tier for up to 10 users with unlimited tasks and projects, whereas Asana restricts most advanced views and dashboards behind premium tiers.",
+    question: "Is there a free tier for small teams starting with WeKraft?",
+    answer: "Yes! WeKraft offers a free tier for up to 10 users with unlimited tasks and projects, whereas Asana restricts most advanced views and dashboards behind premium tiers.",
   },
 ];
 
@@ -77,20 +82,10 @@ export default function AsanaComparePage() {
       <Navbar />
 
       <main className="flex flex-col items-center pt-32 pb-16 px-4 md:px-8 text-center w-full mx-auto relative z-10">
-        <CompareHero
-          competitorName="Asana"
-          competitorLogo={<CheckCircle2 className="w-3.5 h-3.5 text-rose-400" />}
-          competitorColor="from-rose-500 to-orange-400"
-          title1="Real-time project pulse."
-          title2="Consolidated analytics."
-          description="Monitor days remaining, active tasks, and team radar charts in one unified dashboard. Stop paying for fragmented status tracking apps."
-          visualMockup={<img src="/ins.png" alt="Wekraft Project Dashboard" className="w-full rounded-2xl object-cover border border-white/[0.08]" />}
-        />
-
         <div className="w-full max-w-7xl mx-auto px-4 md:px-8">
           <CompareTable
             competitorName="Asana"
-            competitorLogo={<CheckCircle2 className="w-3.5 h-3.5 text-neutral-400" />}
+            competitorLogo={<img src="/asana-logo.svg" alt="Asana" className="w-5 h-5 object-contain" />}
             features={asanaFeatures}
           />
 

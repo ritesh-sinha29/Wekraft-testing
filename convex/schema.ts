@@ -44,6 +44,7 @@ export default defineSchema({
     // usage tracking (Global)
     cloudStorageUsage: v.optional(v.number()), // How much used 
     kayaUsage: v.optional(v.number()), // Current usage count for this month
+    isAdmin: v.optional(v.boolean()),
   })
     .index("by_token", ["clerkToken"])
     .index("by_accountType", ["accountType"])
@@ -168,7 +169,7 @@ export default defineSchema({
     userImage: v.optional(v.string()),
     message: v.optional(v.string()),
     source: v.union(v.literal("invited"), v.literal("manual")),
-    role: v.optional(v.union(v.literal("admin"), v.literal("member"))),
+    role: v.optional(v.union(v.literal("admin"), v.literal("member"), v.literal("viewer"))),
     status: v.union(
       v.literal("pending"),
       v.literal("accepted"),
@@ -449,20 +450,33 @@ export default defineSchema({
     .index("by_project", ["projectId"])
     .index("by_issue_user", ["issueId", "userId"]),
 
-  // -------------- IDE Extension Support ---------------------
+   // -------------- IDE Extension Support ---------------------
   userApiKeys: defineTable({
     userId: v.id("users"),
-    key: v.string(), // Secure, permanent API key
+    key: v.string(),       // Secure, permanent API key (wk_ prefix + 64 hex chars)
     createdAt: v.number(),
+    lastUsedAt: v.optional(v.number()),  // Tracked on every authenticated request
+    revokedAt: v.optional(v.number()),   // Set on revocation — key is permanently dead
   })
     .index("by_user", ["userId"])
     .index("by_key", ["key"]),
+
+  // Per-API-key sliding-window rate limit counters
+  // One document per (apiKeyId, windowStart) pair, auto-cleaned up
+  apiKeyRateLimits: defineTable({
+    apiKeyId: v.id("userApiKeys"),
+    windowStart: v.number(),  // Unix ms — start of the 1-minute window
+    count: v.number(),         // How many requests in this window
+  })
+    .index("by_key_window", ["apiKeyId", "windowStart"]),
 
   handshakeTokens: defineTable({
     token: v.string(), // Short-lived one-time token (5 min TTL)
     userId: v.id("users"),
     expiresAt: v.number(),
-  }).index("by_token", ["token"]),
+  })
+    .index("by_token", ["token"]),
+
 
   // -------------- Project Upvotes (per-user join table) ---------------------
   projectUpvoteRecords: defineTable({
@@ -551,4 +565,39 @@ export default defineSchema({
     .index("by_project", ["projectId"])
     .index("by_project_status", ["projectId", "status"]),
 
+  // ─── Customer Desk Tables ────────────────────────────────────────────────
+  serviceCustomers: defineTable({
+    projectId: v.id("projects"),
+    name: v.string(),
+    email: v.string(),
+    contact: v.optional(v.string()),
+    createdBy: v.id("users"),           // always the Owner
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_project_email", ["projectId", "email"]),
+
+  serviceRequests: defineTable({
+    projectId: v.id("projects"),
+    customerId: v.id("serviceCustomers"),
+    title: v.string(),
+    description: v.optional(v.string()),
+    type: v.union(v.literal("feature_request"), v.literal("bug_report")),
+    status: v.union(
+      v.literal("pending"),     // awaiting approval
+      v.literal("approved"),    // approved → task/issue created
+      v.literal("rejected"),    // declined
+    ),
+    // Metadata
+    createdBy: v.id("users"),           // Member/Admin/Owner who logged it
+    approvedBy: v.optional(v.id("users")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_customer", ["customerId"])
+    .index("by_project_status", ["projectId", "status"]),
+
 });
+

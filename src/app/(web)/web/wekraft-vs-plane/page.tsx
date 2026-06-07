@@ -1,7 +1,6 @@
 import React from "react";
 import { Metadata } from "next";
 import Navbar from "@/modules/web/Navbar";
-import CompareHero from "@/modules/web/compare/CompareHero";
 import CompareTable, { ComparisonFeature } from "@/modules/web/compare/CompareTable";
 import CompareFeatures from "@/modules/web/compare/CompareFeatures";
 
@@ -9,9 +8,15 @@ import CompareFAQ, { FAQItem } from "@/modules/web/compare/CompareFAQ";
 import { Compass, ArrowRight } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "Wekraft vs Plane | AI-First Software Engineering Hub",
-  description: "Plane is an open-source clone, but it lacks developer integration. Compare Plane with Wekraft's VS Code sync, codebase heatmaps, and autonomous dev agents.",
+  title: {
+    absolute: "WeKraft vs Plane",
+  },
+  description: "Plane is an open-source clone, but it lacks developer integration. Compare Plane with WeKraft's VS Code sync, codebase heatmaps, and autonomous dev agents.",
+  alternates: {
+    canonical: "https://wekraft.xyz/web/wekraft-vs-plane",
+  },
 };
+
 
 const planeFeatures: ComparisonFeature[] = [
   {
@@ -58,16 +63,16 @@ const planeFeatures: ComparisonFeature[] = [
 
 const planeFaqs: FAQItem[] = [
   {
-    question: "How is Wekraft different from Plane?",
-    answer: "Plane is built as an open-source alternative to Jira and Linear, adopting their core designs. Wekraft goes a step further by being an AI-First Developer Ecosystem. It features native VS Code editor syncing, autonomous PM/Dev agents (Kaya & Harry) that have long-term workspace memory, built-in video rooms, and commit stress heatmaps.",
+    question: "How is WeKraft different from Plane?",
+    answer: "Plane is built as an open-source alternative to Jira and Linear, adopting their core designs. WeKraft goes a step further by being an AI-First Developer Ecosystem. It features native VS Code editor syncing, autonomous PM/Dev agents (Kaya & Harry) that have long-term workspace memory, built-in video rooms, and commit stress heatmaps.",
   },
   {
-    question: "Can we self-host Wekraft like we can Plane?",
-    answer: "Yes, Wekraft is built with modern web technologies and supports Docker-based self-hosting deployments. You can deploy Wekraft inside your private cloud environment to keep database files secure.",
+    question: "Can we self-host WeKraft like we can Plane?",
+    answer: "Yes, WeKraft is built with modern web technologies and supports Docker-based self-hosting deployments. You can deploy WeKraft inside your private cloud environment to keep database files secure.",
   },
   {
     question: "Does the Plane importer support migrating cycles and comments?",
-    answer: "Yes. Our custom Plane Importer tool connects securely to your Plane workspace API to pull down active projects, modules, cycle dates, issue logs, assignees, comments, and attachments directly into Wekraft.",
+    answer: "Yes. Our custom Plane Importer tool connects securely to your Plane workspace API to pull down active projects, modules, cycle dates, issue logs, assignees, comments, and attachments directly into WeKraft.",
   },
 ];
 
@@ -77,28 +82,10 @@ export default function PlaneComparePage() {
       <Navbar />
 
       <main className="flex flex-col items-center pt-32 pb-16 px-4 md:px-8 text-center w-full mx-auto relative z-10">
-        <CompareHero
-          competitorName="Plane"
-          competitorLogo={
-            <span className="w-3.5 h-3.5 flex items-center justify-center font-bold text-neutral-300 border border-neutral-300 rounded text-[8px] leading-none shrink-0">
-              P
-            </span>
-          }
-          competitorColor="from-indigo-500 to-violet-500"
-          title1="Meet Kaya, your AI PM."
-          title2="Collaborate in real time."
-          description="Discuss projects, query sprint workloads, and map out client deliverables by chatting directly with Kaya inside your team spaces."
-          visualMockup={<img src="/kaya-team.png" alt="Wekraft Kaya AI PM Agent" className="w-full rounded-2xl object-cover border border-white/[0.08]" />}
-        />
-
         <div className="w-full max-w-7xl mx-auto px-4 md:px-8">
           <CompareTable
             competitorName="Plane"
-            competitorLogo={
-              <span className="w-3.5 h-3.5 flex items-center justify-center font-bold text-neutral-400 border border-neutral-500 rounded text-[8px] leading-none shrink-0">
-                P
-              </span>
-            }
+            competitorLogo={<img src="/plane-so logo.png" alt="Plane" className="w-5 h-5 object-contain" />}
             features={planeFeatures}
           />
 

@@ -2,16 +2,16 @@
 
 const TrustedBy = () => {
   return (
-    <section className="w-full mt-12 md:mt-16 mb-12 flex flex-col items-center gap-8 relative z-10">
-      <p className="text-xs md:text-sm text-neutral-500 font-semibold font-sans tracking-widest uppercase">
+    <section className="w-full mt-12  mb-12 flex flex-col items-center gap-8 relative z-10">
+      <p className="text-xs md:text-base text-neutral-400  font-sans tracking-wide uppercase">
         Trusted by teams and developers at
       </p>
 
       <div className="relative w-full max-w-6xl overflow-hidden py-6">
         {/* Left fade */}
-        <div className="absolute left-0 top-0 bottom-0 w-32 z-10 bg-gradient-to-r from-black to-transparent pointer-events-none" />
+        <div className="absolute left-0 top-0 bottom-0 w-32 z-10 bg-linear-to-r from-black to-transparent pointer-events-none" />
         {/* Right fade */}
-        <div className="absolute right-0 top-0 bottom-0 w-32 z-10 bg-gradient-to-l from-black to-transparent pointer-events-none" />
+        <div className="absolute right-0 top-0 bottom-0 w-32 z-10 bg-linear-to-l from-black to-transparent pointer-events-none" />
 
         <div className="flex animate-logo-marquee items-center w-max">
           {["set-1", "set-2"].map((setKey) => (
@@ -20,21 +20,21 @@ const TrustedBy = () => {
               className="flex gap-24 md:gap-32 items-center shrink-0 pr-24 md:pr-32"
             >
               {/* Wipro */}
-              <div className="opacity-55 hover:opacity-85 transition-opacity">
+              <div className="opacity-55 hover:opacity-100 transition-opacity">
                 <span className="text-neutral-400 text-xl md:text-2xl font-semibold tracking-tight">
                   Wipro
                 </span>
               </div>
 
               {/* VRSA Analytics */}
-              <div className="opacity-55 hover:opacity-85 transition-opacity">
+              <div className="opacity-55 hover:opacity-100 transition-opacity">
                 <span className="text-neutral-400 text-xl md:text-2xl font-semibold tracking-tight">
                   VRSA ANALYTICS
                 </span>
               </div>
 
               {/* Tata */}
-              <div className="flex items-center gap-3 opacity-55 hover:opacity-85 transition-opacity">
+              <div className="flex items-center gap-3 opacity-55 hover:opacity-100 transition-opacity">
                 <svg
                   className="h-7 w-7 md:h-8 w-8"
                   viewBox="0 0 24 24"
@@ -51,14 +51,14 @@ const TrustedBy = () => {
               </div>
 
               {/* Uber */}
-              <div className="opacity-55 hover:opacity-85 transition-opacity">
+              <div className="opacity-55 hover:opacity-100 transition-opacity">
                 <span className="text-neutral-400 text-xl md:text-2xl font-semibold tracking-tight">
                   Uber
                 </span>
               </div>
 
               {/* Supabase */}
-              <div className="flex items-center gap-3 opacity-55 hover:opacity-85 transition-opacity">
+              <div className="flex items-center gap-3 opacity-55 hover:opacity-100 transition-opacity">
                 <svg
                   className="h-7 w-7 md:h-8 w-8"
                   viewBox="0 0 24 24"
@@ -75,7 +75,7 @@ const TrustedBy = () => {
               </div>
 
               {/* Vercel */}
-              <div className="flex items-center gap-3 opacity-55 hover:opacity-85 transition-opacity">
+              <div className="flex items-center gap-3 opacity-55 hover:opacity-100 transition-opacity">
                 <svg
                   className="h-6 w-6 md:h-7 w-7"
                   viewBox="0 0 24 24"
@@ -93,6 +93,38 @@ const TrustedBy = () => {
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="mt-8 flex flex-row items-center justify-center gap-6 w-full relative z-20">
+        <a
+          href="https://www.producthunt.com/products/wekraft?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-wekraft"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:opacity-90 transition-opacity duration-200"
+          id="trustedby-product-hunt-badge"
+        >
+          <img
+            alt="Wekraft - your project lives in Github , so should your workspace. | Product Hunt"
+            src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1165218&theme=light&t=1780813633054"
+            width="250"
+            height="54"
+            className="w-[250px] h-[54px] object-contain"
+          />
+        </a>
+        <a
+          href="https://forg.to/products/wekraft"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:opacity-90 transition-opacity duration-200"
+          id="trustedby-forg-badge"
+        >
+          <img
+            src="https://forg.to/api/badges/launch-winner/wekraft?theme=light&shape=square&rank=1"
+            alt="WeKraft - #1 on forg. on forg."
+            height="54"
+            className="h-[54px] w-auto object-contain"
+          />
+        </a>
       </div>
     </section>
   );

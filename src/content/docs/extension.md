@@ -1,46 +1,78 @@
-# VS Code Extension
+# IDE Extension
 
-The **Wekraft VS Code Extension** is the center of our developer-first planning workflow. It brings your tasks and issue boards directly into your code editor, allowing developers to execute sprints without shifting focus to a browser.
+The **WeKraft IDE Extension** is a developer-first workspace companion. It brings your WeKraft workspace — projects, active sprints, tasks, issues, and tickets — directly into your code editor, so you never have to break your flow or switch context to a browser.
+
+> **Free for Everyone** — The WeKraft Extension is completely free for all users, no plan restrictions. Every WeKraft user gets full extension access.
 
 ---
 
-## Capabilities & Plan Support
+## Features
 
-The extension is available to all users, but write access is governed by your subscription plan:
+### ✅ Project & Sprint Management
+- View all your **projects** and their active **sprints** directly in the editor sidebar.
+- Switch between projects without leaving the editor.
 
-- **Free / Plus Plans (Read-Only Mode)**:
-  - Browse your assigned tasks, descriptions, and estimation windows directly from the VS Code Activity Bar.
-  - Navigate to codebase links.
-  - Status updates and task movements must be done on the Wekraft web dashboard.
-- **Pro Plan (Full Two-Way Sync)**:
-  - Update task status (e.g. from `Not Started` to `In Progress` or `Completed`) directly from your editor.
-  - Syncs code focus timelines automatically based on active workspace directories.
+### ✅ Task & Issue Tracking
+- Browse the full **task and issue backlog** for any project.
+- View task details including title, description, priority, status, assignees, and codebase links.
+- **Update task and issue statuses** directly from the editor (e.g., move a task from `Not Started` → `In Progress` → `Completed`).
+- Create and edit tasks or issues directly from the extension panel.
+- Mark tasks as blocked (Mark as Issue) to escalate task blockages immediately.
+- Delete tasks and issues.
+
+### ✅ Codebase File Navigation
+- Tasks and issues linked to specific files (e.g., `src/components/Navbar.tsx`) render as **clickable file links** inside the extension.
+- Click a file link to instantly open that file in your active editor workspace — no manual searching.
+
+### ✅ Chat Ticket Management
+- Access the **tickets list** for your projects.
+- View open and closed tickets.
+- Close or reopen tickets directly without leaving the development workspace.
+
+---
+
+## What You Cannot Do
+
+### ❌ Create New Projects or Sprints
+- Project and sprint creation must be done through the **WeKraft web dashboard**. The extension is scoped to viewing and acting on existing work.
+
+### ❌ Manage Workspace Members or Roles
+- Inviting members, changing roles, or managing workspace permissions is only available in the **web dashboard settings**.
+
+### ❌ Reply to Chat Tickets or Create Customer Desk Requests
+- Ticket comments, client communications, and Service Requests are managed via the web client (Teamspace and Customer Desk views).
+
+### ❌ Billing & Plan Management
+- Subscription, billing, and plan upgrades are accessible only through the **WeKraft web dashboard**.
 
 ---
 
 ## Handshake Authentication Flow
 
-Wekraft authenticates VS Code securely without exposing sensitive password tokens:
+WeKraft authenticates extension clients securely using a deep-linked handshake protocol that generates a cryptographically signed API key without requiring password exposure:
 
-1. **Initiate Handshake**: Click the **Wekraft icon** in the VS Code Activity Bar and select **"Login with Wekraft"**.
-2. **Browser Authentication**: This launches your default browser, prompting you to log in to Wekraft.
-3. **Grant Access**: Click **"Grant Access to IDE"**. The page will securely pass a temp token back to VS Code via deep-linking protocols.
-4. **Active Project Selection**: Select your target project from the dropdown inside the VS Code sidebar. Your backlog tasks populate immediately.
+```mermaid
+sequenceDiagram
+    participant Editor as WeKraft Extension
+    participant Browser as Web Browser
+    participant WekraftWeb as WeKraft Web App
+    participant Backend as Reactive Backend DB
 
-> [!WARNING]
-> **Token Expiry**: The browser authentication handshake token expires after exactly **5 minutes** for security. If authentication fails, restart the login process from VS Code.
+    Editor->>Browser: 1. Launch extension auth url
+    Browser->>WekraftWeb: 2. User logs in & clicks "Grant Access to Extension"
+    WekraftWeb->>Backend: 3. Invoke handshake token creation
+    Backend-->>WekraftWeb: 4. Returns 5-Min Temp Token
+    WekraftWeb->>Browser: 5. Redirect browser using editor scheme url
+    Browser->>Editor: 6. Handshake Token Intercepted
+    Editor->>Backend: 7. Call handshake verification mutation
+    Note over Backend: Validates token & deletes it.<br/>Inserts new API Key in database.
+    Backend-->>Editor: 8. Returns { userId, apiKey }
+    Editor->>Editor: 9. Securely stores API Key locally
+```
 
----
-
-## IDE Workspace Integration Features
-
-- **Codebase Links**: Tasks in Wekraft can specify a file path relative to your repository root (e.g., `src/App.tsx`). If configured, the extension allows you to open that exact file in your active workspace with one click.
-- **Backlog Scope**: Sprints and tasks cannot be created inside the IDE extension. This maintains a clean boundary: planning is handled on the web dashboard, while execution happens inside your code editor.
-
----
-
-## Next Steps
-
-- Learn about task properties in [Tasks & Backlog](/web/docs/tasks).
-- View how code branches sync in [Git Repositories](/web/docs/repositories).
-- Learn about the [Project Delivery Timeline & Gantt Chart](/web/docs/time-logs).
+### Authentication Lifecycle Details
+1. **Initiate**: Select **"Login with WeKraft"** in the extension Activity Bar. This launches your default browser with the callback redirect parameters.
+2. **Authorize**: Authenticated users click **"Grant Access to Extension"** in the browser.
+3. **Generate Token**: The web app invokes a database mutation to insert a handshake record with a **5-minute Time-To-Live (TTL)**.
+4. **Deep-Link Redirection**: The browser redirects to the custom editor URI scheme.
+5. **Exchange**: The extension catches the deep-link parameters and calls the backend endpoint to exchange the token. On success, this generates a permanent key in the API keys table, revokes the handshake token, and returns `{ userId, apiKey }`.

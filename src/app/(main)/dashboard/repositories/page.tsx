@@ -38,7 +38,7 @@ const RepositoriesPage = () => {
   } | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [linkedDialogOpen, setLinkedDialogOpen] = useState(false);
-  const [linkedProjectName, setLinkedProjectName] = useState("Wekraft Platform");
+  const [linkedProjectName, setLinkedProjectName] = useState("WeKraft Platform");
   const router = useRouter();
 
   const unlinkedProjects = useQuery(api.project.getUnlinkedProjects);
@@ -125,7 +125,7 @@ const RepositoriesPage = () => {
                               </div>
                             </div>
                             <Link
-                              href={`/dashboard/my-projects/${repo.projectId}`}
+                              href={`/dashboard/my-projects/${repo.projectSlug}`}
                               className=" cursor-pointer"
                             >
                               <Button

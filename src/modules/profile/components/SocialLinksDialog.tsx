@@ -82,10 +82,12 @@ const PLATFORMS: Platform[] = [
   },
 ];
 
+const EMPTY_ARRAY: string[] = [];
+
 export const SocialLinksDialog = ({
   open,
   onOpenChange,
-  currentLinks = [],
+  currentLinks = EMPTY_ARRAY,
   defaultFocus,
 }: SocialLinksDialogProps) => {
   const [formData, setFormData] = useState<Record<string, string>>({});
@@ -96,10 +98,11 @@ export const SocialLinksDialog = ({
   useEffect(() => {
     if (open) {
       const initialData: Record<string, string> = {};
-      const remainingLinks = [...currentLinks];
+      const remainingLinks = Array.isArray(currentLinks) ? [...currentLinks] : [];
 
       PLATFORMS.forEach((platform) => {
         const matchingIndex = remainingLinks.findIndex((link) =>
+          link && typeof link === "string" &&
           platform.domains.some((domain) => link.toLowerCase().includes(domain))
         );
 

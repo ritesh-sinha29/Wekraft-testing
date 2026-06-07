@@ -1,7 +1,6 @@
 import React from "react";
 import { Metadata } from "next";
 import Navbar from "@/modules/web/Navbar";
-import CompareHero from "@/modules/web/compare/CompareHero";
 import CompareTable, { ComparisonFeature } from "@/modules/web/compare/CompareTable";
 import CompareFeatures from "@/modules/web/compare/CompareFeatures";
 
@@ -9,9 +8,15 @@ import CompareFAQ, { FAQItem } from "@/modules/web/compare/CompareFAQ";
 import { FileText, ArrowRight } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "Wekraft vs Notion | Structured PM and Docs in One Workspace",
-  description: "Notion is great for documents, but fails as a software engineering hub. Compare Notion with Wekraft's native developer cycles, VS Code sync, and AI agents.",
+  title: {
+    absolute: "WeKraft vs Notion",
+  },
+  description: "Notion is great for documents, but fails as a software engineering hub. Compare Notion with WeKraft's native developer cycles, VS Code sync, and AI agents.",
+  alternates: {
+    canonical: "https://wekraft.xyz/web/wekraft-vs-notion",
+  },
 };
+
 
 const notionFeatures: ComparisonFeature[] = [
   {
@@ -58,16 +63,16 @@ const notionFeatures: ComparisonFeature[] = [
 
 const notionFaqs: FAQItem[] = [
   {
-    question: "Why should we switch from Notion to Wekraft?",
-    answer: "While Notion is a powerful note-taking app, engineering teams quickly run into limits. Notion requires manual setup for database sprints, doesn't track burn-downs or cycle velocity out of the box, and lacks integrations with git and IDEs. Wekraft gives you the clean document interface of Notion but links it natively to high-performance sprint tools, VS Code, and autonomous AI agents.",
+    question: "Why should we switch from Notion to WeKraft?",
+    answer: "While Notion is a powerful note-taking app, engineering teams quickly run into limits. Notion requires manual setup for database sprints, doesn't track burn-downs or cycle velocity out of the box, and lacks integrations with git and IDEs. WeKraft gives you the clean document interface of Notion but links it natively to high-performance sprint tools, VS Code, and autonomous AI agents.",
   },
   {
     question: "Can we import our existing Notion wikis and databases?",
-    answer: "Yes! Wekraft features a dedicated import utility. You can upload Notion CSV exports or connect via Notion API to map databases, pages, tasks, and users to Wekraft modules in minutes.",
+    answer: "Yes! WeKraft features a dedicated import utility. You can upload Notion CSV exports or connect via Notion API to map databases, pages, tasks, and users to WeKraft modules in minutes.",
   },
   {
-    question: "How does Wekraft keep docs and code connected?",
-    answer: "With our VS Code Handshake Sync and bi-directional Git linkage, files mentioned in Wekraft Docs automatically sync with your codebase. Changes to code comments can update Wekraft tasks, and referencing a ticket in a commit updates the Wekraft board state.",
+    question: "How does WeKraft keep docs and code connected?",
+    answer: "With our VS Code Handshake Sync and bi-directional Git linkage, files mentioned in WeKraft Docs automatically sync with your codebase. Changes to code comments can update WeKraft tasks, and referencing a ticket in a commit updates the WeKraft board state.",
   },
 ];
 
@@ -77,20 +82,10 @@ export default function NotionComparePage() {
       <Navbar />
 
       <main className="flex flex-col items-center pt-32 pb-16 px-4 md:px-8 text-center w-full mx-auto relative z-10">
-        <CompareHero
-          competitorName="Notion"
-          competitorLogo={<FileText className="w-3.5 h-3.5 text-neutral-300" />}
-          competitorColor="from-neutral-100 to-neutral-400"
-          title1="Centralize your issues."
-          title2="Built for shipping code."
-          description="Ditch fragile Notion databases. Wekraft delivers a sub-second, structured kanban board with built-in severity levels and automated sprint syncing."
-          visualMockup={<img src="/issues.png" alt="Wekraft Issues Board" className="w-full rounded-2xl object-cover border border-white/[0.08]" />}
-        />
-
         <div className="w-full max-w-7xl mx-auto px-4 md:px-8">
           <CompareTable
             competitorName="Notion"
-            competitorLogo={<FileText className="w-3.5 h-3.5 text-neutral-400" />}
+            competitorLogo={<img src="/Notion-logo.png" alt="Notion" className="w-5 h-5 object-contain" />}
             features={notionFeatures}
           />
 

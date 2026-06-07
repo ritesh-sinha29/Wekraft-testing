@@ -216,9 +216,10 @@ const IssuesPage = () => {
   const isOwner = currentUser?._id === project?.ownerId;
   const userMember = members?.find((m) => m.userId === currentUser?._id);
   const isAdmin = userMember?.AccessRole === "admin";
+  const isViewer = userMember?.AccessRole === "viewer";
 
   const canCreate =
-    isOwner || isAdmin || projectDetails?.memberCanCreate !== false;
+    !isViewer && (isOwner || isAdmin || projectDetails?.memberCanCreate !== false);
 
   const hasIssues = issues && issues.length > 0;
 
@@ -346,7 +347,7 @@ const IssuesPage = () => {
             className="bg-linear-to-t from-indigo-600/30 via-purple-600/10 to-transparent text-xs cursor-pointer"
           >
             <Image src="/kaya.svg" alt="Kaya AI" width={18} height={18} />
-            Ask about Issues
+            Automate Issues
           </Button>
 
           {/* My work */}
@@ -435,7 +436,7 @@ const IssuesPage = () => {
                   </p>
 
                   <div className="flex items-center gap-4 mt-2">
-                    {project && (
+                    {project && canCreate && (
                       <CreateIssueDialog
                         projectId={project._id}
                         projectName={projectName}

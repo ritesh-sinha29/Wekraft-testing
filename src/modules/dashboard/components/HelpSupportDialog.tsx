@@ -92,6 +92,12 @@ export function HelpSupportDialog({ trigger, open, onOpenChange }: HelpSupportDi
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (isOpen) {
+      setActiveTab("ai");
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTo({
         top: scrollContainerRef.current.scrollHeight,
@@ -101,7 +107,7 @@ export function HelpSupportDialog({ trigger, open, onOpenChange }: HelpSupportDi
   }, [messages, toolStatus, isStreaming]);
 
   // Form State
-  const [activeTab, setActiveTab] = useState<"contact" | "ai">("contact");
+  const [activeTab, setActiveTab] = useState<"contact" | "ai">("ai");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [selectedTag, setSelectedTag] = useState<"found bug" | "help needed" | "query" | "payment issue" | "others">("found bug");
@@ -128,7 +134,7 @@ export function HelpSupportDialog({ trigger, open, onOpenChange }: HelpSupportDi
     },
     "query": {
       title: "e.g., Custom webhook payloads support on Plus plan",
-      desc: "Ask us anything about Wekraft features, integrations, or settings...",
+      desc: "Ask us anything about WeKraft features, integrations, or settings...",
     },
     "payment issue": {
       title: "e.g., Invoice details updated for subscription renewal",
@@ -207,18 +213,18 @@ export function HelpSupportDialog({ trigger, open, onOpenChange }: HelpSupportDi
 
             <div className="flex items-center rounded! gap-2 bg-zinc-900">
               <Button
-                variant={activeTab === "contact" ? "default" : "outline"}
-                className="text-[10px] h-7!"
-                onClick={() => setActiveTab("contact")}
-              >
-                Contact support
-              </Button>
-              <Button
                 variant={activeTab === "ai" ? "default" : "outline"}
                 className="text-[10px] h-7!"
                 onClick={() => setActiveTab("ai")}
               >
                 Talk to AI
+              </Button>
+              <Button
+                variant={activeTab === "contact" ? "default" : "outline"}
+                className="text-[10px] h-7!"
+                onClick={() => setActiveTab("contact")}
+              >
+                Contact support
               </Button>
             </div>
           </div>
@@ -354,14 +360,14 @@ export function HelpSupportDialog({ trigger, open, onOpenChange }: HelpSupportDi
                 <div className="flex flex-col items-center justify-center h-full text-center p-4 space-y-4 select-none">
                   <AIAssistantIcon className="h-9 w-9" />
                   <div className="space-y-1">
-                    <h4 className="text-base font-medium text-white">Wekraft AI Assistant</h4>
+                    <h4 className="text-base font-medium text-white">WeKraft AI Assistant</h4>
                   </div>
                   <div className="flex flex-col gap-2 w-full max-w-[400px] pt-1">
                     {[
-                      { label: "Ask anything about Wekraft", query: "Help me get started with Wekraft and explain what I can do here." },
+                      { label: "Ask anything about WeKraft", query: "Help me get started with WeKraft and explain what I can do here." },
                       { label: "Raise queries", query: "I have a query regarding my account or project settings." },
                       { label: "Report bugs", query: "I found a bug in the app. Can you help me report it?" },
-                      { label: "Know more features", query: "Tell me more about Wekraft and what makes it unique." }
+                      { label: "Know more features", query: "Tell me more about WeKraft and what makes it unique." }
                     ].map((item, idx) => (
                       <button
                         key={idx}
@@ -413,7 +419,7 @@ export function HelpSupportDialog({ trigger, open, onOpenChange }: HelpSupportDi
                                     : msg.toolName === "getSupportQueries"
                                       ? (isRunning ? "Fetching support queries..." : "Fetched support queries")
                                       : msg.toolName === "searchDocumentation"
-                                        ? (isRunning ? "Searching Wekraft docs..." : "Searched docs")
+                                        ? (isRunning ? "Searching WeKraft docs..." : "Searched docs")
                                         : msg.toolName === "getDocumentationPage"
                                           ? (isRunning ? "Reading documentation..." : "Read documentation")
                                           : (isRunning ? `Running: ${msg.toolName}...` : `Executed: ${msg.toolName}`)
