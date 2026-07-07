@@ -36,7 +36,7 @@ Right now, the "Timeline" chart is a sleek placeholder. It uses CSS to draw dyna
 
 ## Extension
 1. Extension opens: http://localhost:3000/extension?callback_url=vscode://wekraft.wekraft/auth
-2. User logs in (if needed) → clicks "Grant Access to IDE"   .
+2. User logs in (if needed) → clicks "Grant Access to IDE"
 3. Web app calls createHandshakeToken() → gets a 5-min token
 4. Browser redirects to: vscode://wekraft.wekraft/auth?token=<hex>
 5. Extension calls exchangeHandshakeToken({ token }) via Convex

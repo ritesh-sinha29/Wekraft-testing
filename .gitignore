@@ -43,8 +43,11 @@ next-env.d.ts
 # clerk configuration (can include secrets)
 /.clerk/
 
-# internal content files
-wekraft_insta_content_pack.md
-wekraft_video_scripts_cinematic.md
-env-production
-env-local
+# Sentry Config File
+.env.sentry-build-plugin
+
+# Scratch docs & generated catalog
+/ssip_proposal_wekraft.txt
+/conversation_summary.md
+
+

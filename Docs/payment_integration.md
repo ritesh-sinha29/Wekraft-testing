@@ -1,308 +1,302 @@
-# Wekraft SaaS: Payment Integration & Webhook Guide
-
-This comprehensive reference document details the architecture, configuration, testing procedures, and environment variables for the dual-payment integration (**Stripe** and **Razorpay**) inside Wekraft SaaS.
-
-> **Last updated:** 2026-05-22 — Security hardening pass (auth on cancel/portal, HMAC fix, internalMutation, auto-downgrade cron)
+﻿# Wekraft SaaS: Payment Integration & Webhook Guide
+> Last Updated: June 25, 2026 — Added LemonSqueezy provider, invite link fix verified
 
 ---
 
 ## 1. High-Level Architecture Overview
 
-Wekraft uses a dynamic, location-based payment routing engine. This architecture handles global cards via **Stripe** while routing Indian transactions through **Razorpay** to fully support local card mandates and UPI payment structures.
+Wekraft uses a dynamic, location-based payment routing engine with three payment providers:
+- **Razorpay** — Indian users (UPI, cards, netbanking)
+- **Stripe** — Global users (international credit/debit cards)
+- **LemonSqueezy** — Alternative global provider (hosted checkout, simpler merchant setup)
 
-```mermaid
-graph TD
-    A[Pricing Page / Upgrade Click] --> B{IP Geolocation Check}
-    B -- Country = IN --> C[Razorpay Flow]
-    B -- Country != IN --> D[Stripe Flow]
+`
+[Pricing Page / Upgrade Click]
+         |
+[IP Geolocation Check (ipapi.co)]
+         |
+   India (IN)?
+   /           \
+ YES            NO
+  |              |
+Razorpay      Stripe or LemonSqueezy
+  Flow             Flow
 
-    C --> C1[Server: Create Subscription]
-    C1 --> C2[Client: Open Razorpay SDK Modal]
-    C2 --> C3[Client: Send payment_id + signature]
-    C3 --> C4[Server: Verify HMAC Signature]
-    C4 --> C5[Server: Fulfill Plan in Convex]
-
-    D --> D1[Server: Create Checkout Session]
-    D1 --> D2[Client: Redirect to Stripe Hosted Checkout]
-    D2 --> D3[Stripe Webhook → Server: Fulfill Plan]
-
-    C5 & D3 --> E[Convex Database Sync]
-
-    F[Daily Cron 00:30 UTC] --> G{Users with cancelAtPeriodEnd=true\nAND currentPeriodEnd expired?}
-    G -- Yes --> H[Downgrade to free]
-    G -- No --> I[Skip]
-```
+[Daily Cron 00:30 UTC] --> Check cancelAtPeriodEnd=true AND currentPeriodEnd expired --> Downgrade to free
+`
 
 ### Key Technical Decisions
 
-1. **Server-Side Pricing Control:** All plans, amounts, and metadata are validated and configured on the server. The client cannot send custom pricing to prevent tampering.
-2. **Authenticated Cancel & Portal Routes:** The `/api/payments/razorpay/cancel` and `/api/payments/stripe/portal` routes require a valid Clerk session **and** verify that the resource (subscriptionId / customerId) belongs to the authenticated caller before taking any action.
-3. **Graceful Cancellations (No Instant Downgrades):** When users cancel, their premium plans remain active (`"pro"` or `"plus"`) with `cancelAtPeriodEnd: true` in Convex until their paid billing period (`currentPeriodEnd`) terminates. Downgrades to `"free"` happen via the `customer.subscription.deleted` webhook **and** the daily safety-net cron.
-4. **Webhook Signature Security:** All webhook entry points use `crypto.timingSafeEqual` (Razorpay) and `stripe.webhooks.constructEvent` (Stripe) to prevent replay / spoofing. The Razorpay verify route will return `500` if `RAZORPAY_KEY_SECRET` is missing — it never falls back to an empty string.
-5. **Plan Upgrade is Server-Only:** The `upgradeAccount` Convex mutation is an `internalMutation`. It cannot be called from any browser client — only from other Convex server functions (e.g., coupon redemption flows).
+1. Server-Side Pricing Control: All plans, amounts, and metadata are validated on the server. The client cannot send custom pricing.
+2. Authenticated Cancel & Portal Routes: /api/payments/razorpay/cancel and /api/payments/stripe/portal require a valid Clerk session AND verify resource ownership before taking action.
+3. Graceful Cancellations (No Instant Downgrades): When users cancel, their premium plans remain active with cancelAtPeriodEnd: true in Convex until their paid billing period ends.
+4. Webhook Signature Security: All webhook entry points use crypto.timingSafeEqual (Razorpay) and stripe.webhooks.constructEvent (Stripe). The Razorpay verify route returns 500 if RAZORPAY_KEY_SECRET is missing — never falls back to an empty string.
+5. Plan Upgrade is Server-Only: The upgradeAccount Convex mutation is an internalMutation — cannot be called from any browser client.
 
 ### Relevant File Structure
 
-All payment-related logic is tightly organized into these specific files:
-
-```text
+`
 wekraft-saas/
 ├── src/
-│   ├── modules/web/Pricing.tsx                   # Frontend pricing UI, checkout triggers, location routing
+│   ├── modules/web/Pricing.tsx                         # Frontend pricing UI, checkout triggers, location routing
 │   ├── modules/payments/hooks/
-│   │   ├── useRazorpay.ts                        # Razorpay client hook (modal, verification flow)
-│   │   └── useStripeCheckout.ts                  # Stripe client hook (redirect to checkout session)
-│   └── app/api/payments/                         # Next.js Serverless API Routes
+│   │   ├── useRazorpay.ts                              # Razorpay client hook (modal, verification flow)
+│   │   └── useStripeCheckout.ts                        # Stripe client hook (redirect to checkout session)
+│   └── app/api/payments/
 │       ├── stripe/
-│       │   ├── checkout/route.ts                 # Generates Stripe Checkout Session URL
-│       │   ├── portal/route.ts                   # Generates Stripe Customer Portal URL (Cancel/Manage)
-│       │   └── webhook/route.ts                  # Handles Stripe webhooks (checkout completed, deleted, etc)
-│       └── razorpay/
-│           ├── subscription/route.ts             # Calls Razorpay SDK to create a subscription order
-│           ├── verify/route.ts                   # Validates HMAC signature, updates Convex DB on success
-│           ├── cancel/route.ts                   # Issues cancel request to Razorpay, marks flag in DB
-│           └── webhook/route.ts                  # Handles Razorpay webhooks (charged, cancelled, etc)
-├── convex/                                       # Convex Backend & Database
-│   ├── schema.ts                                 # 'users' table definition with all subscription fields
-│   ├── stripe.ts                                 # Stripe database mutations (updatePlan, verifyOwner)
-│   ├── razorpay.ts                               # Razorpay database mutations (updatePlan, verifyOwner)
-│   ├── payments.ts                               # Cron job: downgradeExpiredPlans
-│   └── crons.ts                                  # Cron scheduler (runs downgradeExpiredPlans daily)
+│       │   ├── checkout/route.ts                       # Generates Stripe Checkout Session URL
+│       │   ├── portal/route.ts                         # Generates Stripe Customer Portal URL (Cancel/Manage)
+│       │   └── webhook/route.ts                        # Handles Stripe webhooks
+│       ├── razorpay/
+│       │   ├── subscription/route.ts                   # Calls Razorpay SDK to create a subscription order
+│       │   ├── verify/route.ts                         # Validates HMAC signature, updates Convex DB on success
+│       │   ├── cancel/route.ts                         # Issues cancel request to Razorpay, marks flag in DB
+│       │   └── webhook/route.ts                        # Handles Razorpay webhooks
+│       └── lemonsqueezy/
+│           ├── checkout/route.ts                       # Creates Lemon Squeezy hosted checkout session
+│           └── webhook/route.ts                        # Handles Lemon Squeezy subscription events
+├── convex/
+│   ├── schema.ts                                       # 'users' table definition with all subscription fields
+│   ├── razorpay.ts                                     # Razorpay DB mutations (updatePlan, verifyOwner)
+│   ├── lemonsqueezy.ts                                 # LemonSqueezy DB mutations (internalMutation)
+│   ├── payments.ts                                     # Cron job: downgradeExpiredPlans
+│   └── crons.ts                                        # Cron scheduler (runs downgradeExpiredPlans daily)
 └── Docs/
-    └── payment_integration.md                    # This master guide
-```
+    └── payment_integration.md                          # This master guide
+`
 
 ---
 
 ## 2. Dynamic Location-Based Routing
 
-The entry point for payment selection resides in the frontend Pricing component (`src/modules/web/Pricing.tsx`):
+The entry point for payment selection resides in src/modules/web/Pricing.tsx:
 
-### A. IP Geolocation Tracing
-1. **Network Request:** On page load, the component executes a background fetch to the free `https://ipapi.co/json/` API.
-2. **Data Extraction:** The API returns a JSON object containing the user's IP data, from which we extract `country_code` (e.g., `"US"`, `"IN"`, `"GB"`).
-3. **Condition:** We evaluate `const isIndia = countryCode === "IN";`
-4. **Dynamic Switch:** 
-   - If `true`, prices render in Rupees (₹) and the checkout button routes to the **Razorpay** flow.
-   - If `false`, prices render in Dollars ($) and the checkout routes to the **Stripe** flow.
+1. On page load, the component fetches https://ipapi.co/json/.
+2. Extracts country_code (e.g., "US", "IN", "GB").
+3. If countryCode === "IN": prices render in Rupees (Rs.) and checkout routes through useRazorpay hook.
+4. If countryCode !== "IN": prices render in USD ($) and checkout routes to Stripe or LemonSqueezy.
 
-**Production Warning:** The free tier of `ipapi.co` is highly rate-limited. If it fails or is blocked, the country code defaults to `null` (Stripe). To ensure Indian users don't get stuck with Stripe (which often fails on local cards/UPI), replace this with a robust solution like Vercel's `x-vercel-ip-country` header or a paid tier of `ipinfo.io` before scaling.
+PRODUCTION WARNING: The free tier of ipapi.co is rate-limited. If it fails, country_code defaults to null (Stripe route). To prevent Indian users from hitting Stripe (which fails on UPI/local cards), replace this with Vercel x-vercel-ip-country header or a paid geolocation provider.
 
 ---
 
-## 3. Stripe Integration Breakdown
+## 3. Stripe Integration
 
-Stripe is integrated completely server-side, using hosted Checkout Sessions and the Customer Billing Portal.
+Stripe is integrated server-side using hosted Checkout Sessions and the Customer Billing Portal.
 
-### A. Stripe Keys — Where to Get Them
+### 3.1 Stripe Keys
 
-Log into [Stripe Dashboard](https://dashboard.stripe.com/) and obtain:
+Log into dashboard.stripe.com and obtain:
+- STRIPE_SECRET_KEY / NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: Developers -> API Keys
+- STRIPE_PLUS_PRICE_ID / STRIPE_PRO_PRICE_ID: Product Catalog -> Add Product -> create recurring monthly products -> copy Price IDs (price_...) NOT Product IDs (prod_...)
+- STRIPE_WEBHOOK_SECRET: Generated when creating a webhook endpoint
 
-1. **`STRIPE_SECRET_KEY` / `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`:** Developers → API Keys.
-2. **`STRIPE_PLUS_PRICE_ID` / `STRIPE_PRO_PRICE_ID`:**
-   - Go to **Product Catalog** → **Add Product**.
-   - Create "Plus" ($7/mo) and "Pro" ($16/mo) as **recurring monthly** products.
-   - Copy the **Price IDs** (starts with `price_...`). ⚠️ **Do NOT use the Product ID (`prod_...`)** — that will cause a hard error on every checkout.
-3. **`STRIPE_WEBHOOK_SECRET`:** Generated when you create a webhook endpoint (see Section 3C).
-4. **`STRIPE_SUCCESS_URL` / `STRIPE_CANCEL_URL`:** Set to your production domain URLs, not localhost.
+### 3.2 Local Webhook Testing (Stripe CLI)
 
-### B. Local Webhook Testing (Stripe CLI)
-
-There are two ways to authenticate the Stripe CLI and forward webhooks:
-
-**Method 1: Browser Authentication**
-```bash
-# 1. Login to your Stripe account
+Method 1: Browser Authentication
 stripe login
-# (You MUST open the browser link provided in the terminal to authorize it)
-
-# 2. Forward webhook events to your local server
 stripe listen --forward-to localhost:3000/api/payments/stripe/webhook
-```
 
-**Method 2: API Key Bypass (Faster)**
-If you don't want to use the browser, you can directly pass your Stripe Secret Key:
-```bash
+Method 2: API Key Bypass
 stripe listen --api-key sk_test_YOUR_SECRET_KEY --forward-to localhost:3000/api/payments/stripe/webhook
-```
 
-After running `stripe listen`, copy the `whsec_...` signing secret printed by the CLI ("Ready! Your webhook signing secret is whsec_...") and set it as `STRIPE_WEBHOOK_SECRET` in `.env.local`. Be sure to restart your `pnpm dev` server so it loads the new secret!
+After running, copy the whsec_... signing secret and set as STRIPE_WEBHOOK_SECRET in .env.local. Restart dev server.
 
-### C. Production Webhook Configuration
+### 3.3 Production Webhook Events
 
-1. Go to **Developers → Webhooks → Add Endpoint**.
-2. URL: `https://yourdomain.com/api/payments/stripe/webhook`
-3. Select these events:
-   - `checkout.session.completed` — initial payment fulfillment
-   - `customer.subscription.updated` — scheduled cancellations, plan changes
-   - `customer.subscription.deleted` — downgrade when billing term ends
-4. Copy the **Signing Secret** → `STRIPE_WEBHOOK_SECRET` in production env.
+- checkout.session.completed — initial payment fulfillment
+- customer.subscription.updated — scheduled cancellations, plan changes
+- customer.subscription.deleted — downgrade when billing term ends
 
-### D. Stripe Billing Portal (Cancel / Manage)
+### 3.4 Stripe Billing Portal (Cancel / Manage)
 
-The portal route (`/api/payments/stripe/portal`) is guarded:
-1. Caller must be authenticated (Clerk session required → `401` otherwise).
-2. The `customerId` in the request body is verified against the caller's Convex record via `api.stripe.verifyCustomerOwner` → `403` if mismatch.
-3. Only then is a Stripe Billing Portal session created and the URL returned.
+Route: /api/payments/stripe/portal
+1. Caller must be authenticated (Clerk session required -> 401 otherwise).
+2. customerId in request body is verified against caller's Convex record via api.stripe.verifyCustomerOwner -> 403 if mismatch.
+3. Only then is a Stripe Billing Portal session created and URL returned.
 
 ---
 
-## 4. Razorpay Integration Breakdown
+## 4. Razorpay Integration
 
-Razorpay uses a hybrid flow: subscription created on the server, processed on the client via the Razorpay Web SDK, then verified securely back on the server.
+Razorpay uses a hybrid flow: subscription created on the server, processed on the client via Razorpay Web SDK, then verified securely back on the server.
 
-### A. Razorpay Keys — Where to Get Them
+### 4.1 Razorpay Keys
 
-Log into [Razorpay Dashboard](https://dashboard.razorpay.com/):
+Log into dashboard.razorpay.com:
+- NEXT_PUBLIC_RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET: Account & Settings -> API Keys
+- RAZORPAY_PLUS_PLAN_ID / RAZORPAY_PRO_PLAN_ID: Subscriptions -> Plans -> Create Plan (monthly, Rs. 649 / Rs. 1499) -> copy plan_... IDs
+- RAZORPAY_WEBHOOK_SECRET: Set when creating a webhook
 
-1. **`NEXT_PUBLIC_RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET`:** Account & Settings → API Keys.
-2. **`RAZORPAY_PLUS_PLAN_ID` / `RAZORPAY_PRO_PLAN_ID`:**
-   - Go to **Subscriptions → Plans → Create Plan**.
-   - Define the interval (monthly) and amount (₹649 / ₹1499).
-   - Copy the Plan IDs (e.g., `plan_...`). ⚠️ **Do NOT use placeholder values** — the subscription creation will fail.
-3. **`RAZORPAY_WEBHOOK_SECRET`:** Set when creating a webhook in Razorpay Dashboard (see Section 4C).
+### 4.2 Local Webhook Testing (ngrok)
 
-### B. Local Webhook Testing (ngrok)
-
-Razorpay has no CLI forwarder — use ngrok to expose localhost:
-
-```bash
 ngrok http 3000
-```
+Set webhook URL in Razorpay Dashboard: https://xxxx.ngrok-free.app/api/payments/razorpay/webhook
 
-1. Copy the HTTPS URL (e.g., `https://xxxx-xx.ngrok-free.app`).
-2. Razorpay Dashboard → Settings → Webhooks → Add New Webhook.
-3. Webhook URL: `https://xxxx-xx.ngrok-free.app/api/payments/razorpay/webhook`
-4. Set a strong **Webhook Secret** → `RAZORPAY_WEBHOOK_SECRET` in `.env.local`.
-5. Active Events:
-   - `subscription.charged`
-   - `subscription.cancelled`
-   - `subscription.halted`
-   - `subscription.paused`
-   - `subscription.resumed`
+Active events:
+- subscription.charged
+- subscription.cancelled
+- subscription.halted
+- subscription.paused
+- subscription.resumed
 
-### C. Production Webhook Configuration
+### 4.3 Razorpay Cancel Flow
 
-Update the Webhook URL to: `https://yourdomain.com/api/payments/razorpay/webhook`
+Route: /api/payments/razorpay/cancel
+1. Caller must be authenticated (Clerk session -> 401 otherwise).
+2. subscriptionId is verified against caller's Convex record via api.razorpay.verifySubscriptionOwner -> 403 if mismatch.
+3. razorpay.subscriptions.cancel(subscriptionId, true) executes — the true flag cancels at END of billing cycle, not immediately.
+4. Convex is immediately patched with cancelAtPeriodEnd: true so UI shows "Ends on [Date]".
 
-### D. Razorpay Cancel Flow
+### 4.4 Razorpay Payment Signature Verification
 
-The cancel route (`/api/payments/razorpay/cancel`) is guarded:
-1. Caller must be authenticated (Clerk session required → `401` otherwise).
-2. The `subscriptionId` in the request body is verified against the caller's Convex record via `api.razorpay.verifySubscriptionOwner` → `403` if mismatch.
-3. Only then does `razorpay.subscriptions.cancel(subscriptionId, true)` execute. The `true` parameter is crucial—it commands Razorpay to cancel at the end of the billing cycle, not immediately.
-4. Convex is updated immediately with `cancelAtPeriodEnd: true` so the UI reflects the cancellation (showing the "Ends on" pill) without waiting for the webhook.
+Route: /api/payments/razorpay/verify
+HMAC: SHA256(RAZORPAY_KEY_SECRET, razorpay_payment_id + "|" + razorpay_subscription_id)
 
-### E. Razorpay Payment Signature Verification (Security)
-
-The verify route (`/api/payments/razorpay/verify`) computes:
-```
-HMAC-SHA256(RAZORPAY_KEY_SECRET, razorpay_payment_id + "|" + razorpay_subscription_id)
-```
-
-**Critical rules enforced:**
-- If `RAZORPAY_KEY_SECRET` is missing, the route returns `500`. It **never** falls back to an empty string (an empty HMAC key allows anyone to forge signatures).
-- Signature comparison uses `crypto.timingSafeEqual` wrapped in `try/catch` — no pre-length-check is done (which would re-introduce a timing side channel).
-- Proper API error introspection extracts exact Razorpay SDK error descriptions instead of generic `[object Object]` strings on the frontend.
+Security rules:
+- If RAZORPAY_KEY_SECRET is missing, route returns 500 — never falls back to empty string.
+- Uses crypto.timingSafeEqual wrapped in try/catch — no pre-length-check (which would re-introduce timing side channel).
+- Proper Razorpay SDK error introspection instead of generic [object Object] strings.
 
 ---
 
-## 5. Convex Database Architecture & Subscription Tracking
+## 5. LemonSqueezy Integration (NEW)
+
+LemonSqueezy is available as an alternative global payment provider with a simpler merchant setup than Stripe.
+
+### 5.1 Flow
+
+1. Client calls POST /api/payments/lemonsqueezy/checkout with { planName, planType, priceUSD, userEmail }.
+2. Route requires Clerk authentication (401 if missing).
+3. Route looks up user via api.user.getUserByClerkToken.
+4. Creates a Lemon Squeezy hosted checkout via API v1 with:
+   - checkout_data.custom: { userId: convexUserId, planType } embedded in the checkout payload.
+   - product_options.redirect_url: Set to origin/dashboard?success=true.
+5. Returns { url: checkoutUrl } — client redirects user to the Lemon Squeezy hosted checkout page.
+
+### 5.2 LemonSqueezy Keys
+
+Log into app.lemonsqueezy.com:
+- LEMONSQUEEZY_API_KEY: Settings -> API
+- LEMONSQUEEZY_STORE_ID: Your store ID
+- LEMONSQUEEZY_PLUS_VARIANT_ID: The variant ID for the Plus plan product
+- LEMONSQUEEZY_PRO_VARIANT_ID: The variant ID for the Pro plan product
+
+### 5.3 Convex Integration
+
+File: convex/lemonsqueezy.ts
+
+updatePlanServerSideInternal (internalMutation):
+- Called from the /api/payments/lemonsqueezy/webhook handler.
+- Updates accountType, subscriptionId, customerId, subscriptionStatus, currentPeriodEnd.
+- Only upgrades plan if status is "active", "on_trial", or "trialing". Otherwise preserves current plan.
+
+### 5.4 Webhook Setup
+
+Active events to subscribe to in Lemon Squeezy Dashboard:
+- order_created — initial payment
+- subscription_updated — plan changes, cancellations
+- subscription_cancelled — end of billing period
+
+Webhook URL: https://yourdomain.com/api/payments/lemonsqueezy/webhook
+
+---
+
+## 6. Convex Database Architecture & Subscription Tracking
 
 Both payment integrations feed into Convex. The exact status and remaining time of a user's subscription is continuously tracked and synced.
 
-### A. User Document — Payment Fields
+### 6.1 User Document — Payment Fields
 
-To support premium plans, the user document records:
-- **Account Type**: The active plan tier (Free, Plus, or Pro).
-- **Subscription Identifier**: The subscription ID generated by the payment provider (Stripe or Razorpay).
-- **Customer Identifier**: The Stripe Customer ID (used exclusively for Stripe).
-- **Subscription Status**: The status string returned by the provider (e.g. active, cancelled).
-- **Provider**: Tracks which gateway processed the subscription (stripe or razorpay).
-- **Period End Date**: Unix timestamp indicating the end of the paid cycle.
-- **Cancel At Period End**: Boolean flag indicating if the subscription has been cancelled but remains active until the end of the current billing cycle.
-- **Plan Expiry**: For temporary coupon-based upgrades.
+From convex/schema.ts:
+- accountType: "free" | "plus" | "pro" — active plan tier
+- subscriptionId: subscription ID from Stripe or Razorpay or LemonSqueezy
+- customerId: Stripe Customer ID (used for portal redirect) or LemonSqueezy customer ID
+- subscriptionStatus: "active" | "past_due" | "cancelled" | "on_trial" etc.
+- subscriptionProvider: "razorpay" | "stripe" | "lemonsqueezy"
+- currentPeriodEnd: Unix timestamp (ms) of billing period end
+- cancelAtPeriodEnd: boolean — true when cancelled but still active until period end
+- planExpiry: for temporary coupon-based upgrades
 
-### B. Tracking Cycle Ends & Cancellations (Graceful Downgrade Flow)
+### 6.2 Graceful Downgrade Flow
 
-We employ **Graceful Cancellations**. Users are never downgraded instantly when they cancel; they retain premium features until the final second they paid for.
-
-1. **Setting the Expiry Clock (`currentPeriodEnd`):**
-   When a user's subscription is successfully charged, Stripe/Razorpay webhooks trigger `handleSubscriptionUpdate`. They send a timestamp (`current_period_end` or `current_end`). Convex multiplies this by 1000 (to make it a JS Date-compatible ms timestamp) and saves it to the user's `currentPeriodEnd`.
-
-2. **Triggering the Cancel Intent:**
-   - **Stripe:** User clicks cancel, modifies plan in Stripe Portal. Stripe webhook `customer.subscription.updated` patches Convex with `cancelAtPeriodEnd: true`.
-   - **Razorpay:** User clicks cancel. API calls `razorpay.subscriptions.cancel(id, true)`. Convex is immediately patched with `cancelAtPeriodEnd: true`.
-   - **UI Impact:** The `Pricing.tsx` UI sees this flag and replaces the Cancel Button with an orange pill: `"Ends on [Date]"`.
-
-3. **Executing the Downgrade (End of Cycle):**
-   - **Webhook Trigger:** Once the paid period expires, Stripe fires `customer.subscription.deleted`, and Razorpay fires `subscription.cancelled`. The webhooks catch this and immediately set `accountType: "free"`.
-   - **Cron Trigger (Safety Net):** If the webhook fails to deliver due to an outage, the daily Cron at 00:30 UTC checks `if (cancelAtPeriodEnd === true && currentPeriodEnd < Date.now())` and forces the downgrade.
-
-4. **Upgrading after Canceling:**
-   If a user cancels (gaining the `cancelAtPeriodEnd: true` flag), but then changes their mind and re-purchases a Pro/Plus plan, the `updatePlanServerSide` mutation executes. It actively injects `cancelAtPeriodEnd: false` into the database patch. This wipes the old cancellation state clean, preventing the UI from falsely showing "Ends on...".
+1. Setting the Expiry Clock: When subscription is charged, webhook patches currentPeriodEnd.
+2. Triggering Cancel Intent:
+   - Stripe: Portal webhook patches cancelAtPeriodEnd: true.
+   - Razorpay: Cancel API + immediate Convex patch.
+   - LemonSqueezy: subscription_cancelled webhook.
+3. Executing Downgrade:
+   - Webhook fires on period end -> accountType: "free".
+   - Daily cron at 00:30 UTC as safety net: checks cancelAtPeriodEnd === true AND currentPeriodEnd < Date.now() -> downgrade.
+4. Upgrading after Canceling: updatePlanServerSide actively injects cancelAtPeriodEnd: false into the database patch.
 
 ---
 
-## 6. Auto-Downgrade Cron (Safety Net)
+## 7. Auto-Downgrade Cron (Safety Net)
 
-**File:** `convex/payments.ts` — `downgradeExpiredPlans`
-**Schedule:** Daily at **00:30 UTC** (defined in `convex/crons.ts`)
+File: convex/payments.ts — downgradeExpiredPlans
+Schedule: Daily at 00:30 UTC (defined in convex/crons.ts)
 
 This cron is the safety net for when provider webhooks are delayed or missed. It:
-1. Queries all `plus` and `pro` users using the `by_accountType` index.
-2. Filters those where `cancelAtPeriodEnd === true` AND `currentPeriodEnd < Date.now()`.
-3. Patches matching users: `accountType → "free"`, `subscriptionStatus → "canceled"`, `cancelAtPeriodEnd → false`.
+1. Queries all "plus" and "pro" users using the by_accountType index.
+2. Filters those where cancelAtPeriodEnd === true AND currentPeriodEnd < Date.now().
+3. Patches matching users: accountType -> "free", subscriptionStatus -> "canceled", cancelAtPeriodEnd -> false.
 
-> **Important:** This cron runs **in addition to** (not instead of) webhook-based downgrades. Webhooks are the primary mechanism and fire in near-real-time; the cron is the daily catch-all.
+IMPORTANT: This cron runs in addition to (not instead of) webhook-based downgrades. Webhooks are primary; cron is the daily catch-all.
 
 ---
 
-## 7. Complete Environment Variable Reference
-
-Add these to `.env.local` (local dev) and your production host (Vercel / Convex dashboard env vars).
+## 8. Complete Environment Variable Reference
 
 | Variable | Required For | Source | Notes |
-|----------|-------------|--------|-------|
-| `NEXT_PUBLIC_RAZORPAY_KEY_ID` | Client SDK + verify route | Razorpay API Keys | `rzp_live_...` in production |
-| `RAZORPAY_KEY_SECRET` | Server verify + cancel routes | Razorpay API Keys | Never expose to client. Missing = 500, not empty HMAC |
-| `RAZORPAY_PLUS_PLAN_ID` | Subscription creation | Razorpay Plans | Must be real `plan_...` ID, not placeholder |
-| `RAZORPAY_PRO_PLAN_ID` | Subscription creation | Razorpay Plans | Must be real `plan_...` ID, not placeholder |
-| `RAZORPAY_WEBHOOK_SECRET` | Webhook signature verification | Razorpay Webhook Settings | Use a strong random secret |
-| `STRIPE_SECRET_KEY` | All Stripe server routes | Stripe API Keys | `sk_live_...` in production |
-| `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | Reference only | Stripe API Keys | Currently unused client-side |
-| `STRIPE_WEBHOOK_SECRET` | Stripe webhook verifier | Stripe CLI / Webhook Settings | `whsec_...` |
-| `STRIPE_SUCCESS_URL` | Redirect after checkout | Your app URL | Use production URL, not localhost |
-| `STRIPE_CANCEL_URL` | Redirect on checkout cancel | Your app URL | Use production URL, not localhost |
-| `STRIPE_PLUS_PRICE_ID` | Stripe Checkout | Stripe Product Catalog | Must be `price_...`, NOT `prod_...` |
-| `STRIPE_PRO_PRICE_ID` | Stripe Checkout | Stripe Product Catalog | Must be `price_...`, NOT `prod_...` |
-| `BACKEND_SECRET` | Server-to-Convex auth | Generated 64-char hex | All payment mutations validate this |
-| `NEXT_PUBLIC_CONVEX_URL` | ConvexHttpClient in API routes | Convex Dashboard | `https://xxx.convex.cloud` |
+|---|---|---|---|
+| NEXT_PUBLIC_RAZORPAY_KEY_ID | Client SDK + verify route | Razorpay API Keys | rzp_live_... in production |
+| RAZORPAY_KEY_SECRET | Server verify + cancel routes | Razorpay API Keys | Never expose to client. Missing = 500 |
+| RAZORPAY_PLUS_PLAN_ID | Subscription creation | Razorpay Plans | Must be real plan_... ID |
+| RAZORPAY_PRO_PLAN_ID | Subscription creation | Razorpay Plans | Must be real plan_... ID |
+| RAZORPAY_WEBHOOK_SECRET | Webhook signature verification | Razorpay Webhook Settings | Strong random secret |
+| STRIPE_SECRET_KEY | All Stripe server routes | Stripe API Keys | sk_live_... in production |
+| NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY | Client reference | Stripe API Keys | Currently unused client-side |
+| STRIPE_WEBHOOK_SECRET | Stripe webhook verifier | Stripe CLI / Webhook Settings | whsec_... |
+| STRIPE_SUCCESS_URL | Redirect after checkout | Your app URL | Use production URL, not localhost |
+| STRIPE_CANCEL_URL | Redirect on checkout cancel | Your app URL | Use production URL, not localhost |
+| STRIPE_PLUS_PRICE_ID | Stripe Checkout | Stripe Product Catalog | Must be price_..., NOT prod_... |
+| STRIPE_PRO_PRICE_ID | Stripe Checkout | Stripe Product Catalog | Must be price_..., NOT prod_... |
+| LEMONSQUEEZY_API_KEY | LemonSqueezy routes | LS Dashboard -> API | Bearer token |
+| LEMONSQUEEZY_STORE_ID | LemonSqueezy checkout | LS Dashboard | Numeric store ID |
+| LEMONSQUEEZY_PLUS_VARIANT_ID | LS checkout route | LS Product Catalog | Variant ID for Plus plan |
+| LEMONSQUEEZY_PRO_VARIANT_ID | LS checkout route | LS Product Catalog | Variant ID for Pro plan |
+| BACKEND_SECRET | Server-to-Convex auth | Generated 64-char hex | Payment mutations validate this |
+| NEXT_PUBLIC_CONVEX_URL | ConvexHttpClient in API routes | Convex Dashboard | https://xxx.convex.cloud |
+| NEXT_PUBLIC_APP_URL | Invite links, redirects | Your app URL | https://wekraft.xyz in production |
 
 ---
 
-## 8. API Route Security Summary
+## 9. API Route Security Summary
 
 | Route | Auth Required | Ownership Check | Notes |
-|-------|-------------|-----------------|-------|
-| `POST /api/payments/stripe/checkout` | ❌ No Clerk auth | — | User provides userId; rate limit recommended |
-| `POST /api/payments/stripe/webhook` | ✅ Stripe signature | — | Public (webhooks are server-to-server) |
-| `POST /api/payments/stripe/portal` | ✅ Clerk auth | ✅ customerId ownership | Returns 401 / 403 on violation |
-| `POST /api/payments/razorpay/subscription` | ❌ No Clerk auth | — | Rate limit recommended |
-| `POST /api/payments/razorpay/verify` | ❌ No Clerk auth | ✅ HMAC signature | Signature IS the proof of payment |
-| `POST /api/payments/razorpay/cancel` | ✅ Clerk auth | ✅ subscriptionId ownership | Returns 401 / 403 on violation |
-| `POST /api/payments/razorpay/webhook` | ✅ Razorpay HMAC signature | — | Public (webhooks are server-to-server) |
+|---|---|---|---|
+| POST /api/payments/stripe/checkout | None | - | Rate limit recommended |
+| POST /api/payments/stripe/webhook | Stripe signature | - | Public (server-to-server) |
+| POST /api/payments/stripe/portal | Clerk auth | customerId ownership | 401/403 on violation |
+| POST /api/payments/razorpay/subscription | None | - | Rate limit recommended |
+| POST /api/payments/razorpay/verify | None | HMAC signature | Signature IS the proof |
+| POST /api/payments/razorpay/cancel | Clerk auth | subscriptionId ownership | 401/403 on violation |
+| POST /api/payments/razorpay/webhook | Razorpay HMAC | - | Public (server-to-server) |
+| POST /api/payments/lemonsqueezy/checkout | Clerk auth | - | Returns LS checkout URL |
+| POST /api/payments/lemonsqueezy/webhook | LS signature | - | Public (server-to-server) |
 
 ---
 
-## 9. Adding New Plans (Future Expansion)
+## 10. Adding New Plans (Future Expansion)
 
 To add a new tier (e.g., "Enterprise"):
 
-1. **Schema:** Add `v.literal("enterprise")` to `accountType` in `convex/schema.ts`.
-2. **Plan limits:** Add `enterprise` entry to `PLAN_CONFIGS` in `convex/pricing.ts`.
-3. **Stripe:** Create product in Stripe → get `price_...` ID → set `STRIPE_ENTERPRISE_PRICE_ID`.
-4. **Razorpay:** Create plan in Razorpay → get `plan_...` ID → set `RAZORPAY_ENTERPRISE_PLAN_ID`.
-5. **Checkout route:** Add `planType === "enterprise"` branch in `stripe/checkout/route.ts` and `razorpay/subscription/route.ts`.
-6. **UI:** Add new plan object to the `plans` array in `src/modules/web/Pricing.tsx`.
-7. **Convex mutations:** Update `updatePlanServerSide` arg validators in `stripe.ts` and `razorpay.ts` to accept `"enterprise"`.
+1. Schema: Add v.literal("enterprise") to accountType in convex/schema.ts.
+2. Plan limits: Add "enterprise" entry to PLAN_CONFIGS in convex/pricing.ts.
+3. Stripe: Create product -> get price_... ID -> set STRIPE_ENTERPRISE_PRICE_ID.
+4. Razorpay: Create plan -> get plan_... ID -> set RAZORPAY_ENTERPRISE_PLAN_ID.
+5. LemonSqueezy: Create variant -> get ID -> set LEMONSQUEEZY_ENTERPRISE_VARIANT_ID.
+6. Checkout routes: Add planType === "enterprise" branch in all three checkout routes.
+7. UI: Add new plan object to the plans array in Pricing.tsx.
+8. Convex mutations: Update updatePlanServerSide arg validators in stripe.ts, razorpay.ts, and lemonsqueezy.ts to accept "enterprise".

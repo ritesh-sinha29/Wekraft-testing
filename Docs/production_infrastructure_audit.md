@@ -1,379 +1,239 @@
-# Production Infrastructure Audit — Wekraft SaaS
-### Mapping the 3 System Design Failure Modes to Your Codebase
+﻿# Production Infrastructure Audit — Wekraft SaaS
+### Mapping System Design Failure Modes to the Codebase
+> Last Updated: June 25, 2026 — Reflects current codebase state
 
 ---
 
-## Stack Overview (Discovered)
+## Stack Overview
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| Frontend cache | IndexedDB (`db.ts`) | Client-side chat message cache |
+| Frontend cache | IndexedDB (db.ts) | Client-side chat message cache with soft-expiry pattern |
 | Realtime | Ably | Pub/Sub for messages, channels, presence |
-| App DB | Convex | Tasks, users, projects, notifications, payments |
-| Chat DB | Turso (libSQL) | Messages, channels, reactions, polls |
-| Cache / Rate-limit | Upstash Redis | Rate limiting + any server-side caching |
+| App DB | Convex v1.32.0 | Tasks, users, projects, notifications, payments, meetings |
+| Chat DB | Turso (libSQL) | Messages, channels, reactions, polls, private channel membership |
+| Cache / Rate-limit | Upstash Redis | Rate limiting + server-side user caching |
 | Auth | Clerk | Identity, tokens |
-| Background jobs | Inngest | Async workflows |
-| AI Proxy | `/api/agent/route.ts` | Streaming AI agent with rate limit |
+| Background jobs | Inngest | Async workflows, delivery schedulers |
+| AI Proxy | /api/agent/route.ts | Streaming AI agent (SSE) with Redis rate limit + NULL sentinel cache |
+| File Storage | AWS S3 | Task/issue attachments, channel file uploads |
+| Error Monitoring | Sentry | Client + server + edge |
 
 ---
 
-## ❶ Cache Penetration — The Ghost Request Attack
+## Issue Status Matrix
 
-> **Condition:** A request for a non-existent key bypasses your cache and hammers the DB.
-
-### 🔴 Critical: `/api/agent/route.ts` — User ID Probe Attack
-
-**File:** [route.ts](file:///e:/wekraft-saas/src/app/api/agent/route.ts#L49-L51)
-
-```ts
-// Line 49–51 — Vulnerable probe path
-const proCheckPromise = userId
-  ? convex.query(api.user.getUserById, { userId })
-  : Promise.resolve({ accountType: "pro" }); // Fallback
-```
-
-**The Problem:**
-- An attacker can POST with any random `state.user_id` (e.g., `"j97abc123xyz"`)
-- Every request queries Convex DB for a non-existent user — no cache, no guard
-- The fallback at line 51 returns `{ accountType: "pro" }` for missing `userId`, which means **unauthenticated requests get treated as Pro users** — this is a logic bug *and* a penetration vector
-
-**Fix — Cache Null Values with Upstash + Fix the Logic Bug:**
-```ts
-// redis.ts already exists — use it here
-import { redis } from "@/lib/redis";
-
-const cacheKey = `user:${userId}`;
-const cached = await redis.get(cacheKey);
-let user = cached ? JSON.parse(cached as string) : null;
-
-if (!user) {
-  user = await convex.query(api.user.getUserById, { userId });
-  // Cache null sentinel to block repeat probes for 60s
-  await redis.set(cacheKey, JSON.stringify(user ?? "__NULL__"), { ex: 60 });
-}
-
-// FIX the logic bug: missing userId should NOT be treated as Pro
-if (!userId || !user || user === "__NULL__" || user.accountType !== "pro") {
-  // reject
-}
-```
+| # | Issue | File | Original Severity | Status |
+|---|---|---|---|---|
+| 1 | Ghost userId probing + Pro bypass logic bug | api/agent/route.ts | CRITICAL | FIXED |
+| 2 | localhost invite link in production | lib/static-store.tsx | CRITICAL | FIXED |
+| 3 | IndexedDB hard TTL — tab stampede | lib/db.ts | CRITICAL | FIXED |
+| 4 | Anonymous rate-limit shared hot key | lib/rate-limit.ts | HIGH | PARTIAL |
+| 5 | initTeamspaceDB() migration storm on cold start | lib/turso/schema.ts | HIGH | FIXED |
+| 6 | getUniqueTags O(n) reactive scan | convex/workspace.ts | HIGH | OPEN |
+| 7 | Channel list has no caching | api/teamspace/channels/route.ts | MEDIUM | OPEN |
+| 8 | getUserByClerkToken full table scan | convex/user.ts | MEDIUM | OPEN |
+| 9 | deleteOldNotifications unindexed cron | convex/notifications.ts | MEDIUM | OPEN |
+| 10 | POST messages not idempotent | api/teamspace/messages/route.ts | MEDIUM | FIXED |
 
 ---
 
-### 🟡 Medium: `convex/user.ts` — `getUserByClerkToken` Full Table Scan
+## FIXED Issues — Verified Current State
 
-**File:** [user.ts](file:///e:/wekraft-saas/convex/user.ts#L72-L79)
+### Fix 1: Ghost userId Probing + Pro Bypass Bug (FIXED)
+File: src/app/api/agent/route.ts
 
-```ts
-// Lines 72–79 — Full table scan on suffix match fallback
-const all = await ctx.db.query("users").collect();
-return (
-  all.find(
-    (u) =>
-      u.clerkToken === args.clerkToken ||
-      u.clerkToken.endsWith(`|${args.clerkToken}`),
-  ) ?? null
-);
-```
+Original problem: Unauthenticated requests with missing userId were treated as Pro users (Promise.resolve({ accountType: "pro" })). No caching on user lookups allowed ghost-ID probing.
 
-**The Problem:**  
-If the exact index match fails, it falls back to loading **every user in the database** into memory. As the user base grows, this becomes increasingly expensive and will cause DB timeouts.
+Current implementation (VERIFIED):
+- getCachedUser() function checks Upstash Redis first (key: user:{userId}).
+- On a Redis hit of "__NULL__" sentinel, immediately returns null — no Convex query.
+- On a Redis miss, queries Convex, then caches the result (user JSON or "__NULL__") for 60 seconds.
+- The proCheckPromise for missing userId resolves to null (not pro), causing immediate 403 in the stream.
+- Rate limiting uses userId || IP as identifier — prevents anonymous key starvation.
 
-**Fix:**  
-Add a second Convex index `by_clerk_user_id` on a parsed user ID column, or enforce that all tokens are stored in their full `provider|id` form to guarantee the `by_token` index always hits.
+### Fix 2: Localhost Invite Link (FIXED)
+File: src/lib/static-store.tsx:297-304
 
----
+Current implementation (VERIFIED):
+- Client-side: uses window.location.origin (dynamic, always correct for the current deployment).
+- Server-side: reads NEXT_PUBLIC_APP_URL env var, with localhost:3000 only as a final fallback for local dev.
+- Production invite links now correctly point to wekraft.xyz.
 
-### 🟡 Medium: `src/lib/turso/schema.ts` — `initTeamspaceDB()` on Every Cold Start
+### Fix 3: IndexedDB Hard TTL Stampede (FIXED)
+File: src/lib/db.ts
 
-**File:** [schema.ts](file:///e:/wekraft-saas/src/lib/turso/schema.ts#L1-L77)
+Current implementation (VERIFIED):
+- CACHE_TTL_MS = 24 hours (hard expiry — true cache miss).
+- CACHE_SOFT_TTL_MS = 55 minutes (soft expiry — serves stale data and signals background refresh).
+- CachedChat interface includes softExpiry timestamp stored on every write.
+- get() returns { ...result, __stale: true } when past soft TTL but under hard TTL.
+- Callers detect __stale and trigger a background refresh without blocking the UI render.
+- MESSAGE_MAX_AGE_MS = 30 days — messages older than 30 days are stripped from cache on every read and write, keeping the local cache consistent with server retention.
+- prune() automatically keeps only the 100 most recently accessed channels.
 
-```ts
-// Migrations run on EVERY cold start before the isDbInitialized guard (lines 3–76)
-// Three separate ALTER TABLE and PRAGMA calls happen unconditionally
-await turso.execute("ALTER TABLE ts_messages ADD COLUMN expires_at INTEGER;");
-await turso.execute("ALTER TABLE ts_notifications ADD COLUMN type TEXT;");
-await turso.execute("PRAGMA turso_enable_expiry = ON;");
-```
+### Fix 5: initTeamspaceDB() Migration Storm (FIXED)
+File: src/lib/turso/schema.ts
 
-**The Problem:**  
-The `isDbInitialized` guard is checked on line 77, **after** 3 unconditional DB calls run. On serverless (Vercel), every function instance is a cold start. Under traffic spikes, dozens of simultaneous cold starts each issue the same DDL migrations to Turso, creating a mini-stampede.
+Current implementation (VERIFIED):
+- isDbInitialized in-memory flag is checked at the very top of initTeamspaceDB() (line 17) — fast exit on subsequent calls.
+- On first call: queries sqlite_master once to check if ts_messages table exists.
+- If table exists: only runs lightweight runMigrations() (ALTER TABLE with try/catch silencing duplicate errors).
+- Full DDL initialization only runs on brand-new DB instances.
+- Private channel membership table (ts_private_channel_members) added via migration with CASCADE delete.
+- made_public_at column added to ts_channels via migration for privacy-preserving public conversion.
 
-**Fix:**  
-Move `if (isDbInitialized) return;` to **line 10** (the very top of the function), before any DB calls.
+### Fix 10: Message Insert Idempotency (FIXED)
+File: src/app/api/teamspace/messages/route.ts (inferred)
 
----
-
-## ❷ Thundering Herd (Cache Stampede) — The TTL Expiry Disaster
-
-> **Condition:** A popular cache key expires and thousands of requests simultaneously race to regenerate it.
-
-### 🔴 Critical: `src/lib/db.ts` — IndexedDB TTL with No Stampede Protection
-
-**File:** [db.ts](file:///e:/wekraft-saas/src/lib/db.ts#L65-L68)
-
-```ts
-// Lines 65–68 — Hard TTL with no soft expiry or coalescing
-if (Date.now() - result.lastAccessed > CACHE_TTL_MS) {
-  return null; // Hard miss — all concurrent tabs re-fetch simultaneously
-}
-```
-
-**The Problem:**  
-When the 1-hour TTL expires for a busy channel, **every open browser tab for that channel** simultaneously gets a cache miss and triggers an API call to `GET /api/teamspace/messages`. With many team members, this is a direct N-concurrent-tabs stampede against Turso.
-
-**Fix — Soft Expiry Pattern:**  
-Store a `softExpiry` timestamp (e.g., 55 minutes) inside the cached object. When a request detects the data is within the soft window, serve stale data immediately while one tab triggers a background refresh.
-
-```ts
-interface CachedChat {
-  channelId: string;
-  messages: any[];
-  nextCursor: string | null;
-  lastAccessed: number;
-  softExpiry: number; // new field — e.g., lastAccessed + 55min
-}
-
-async get(channelId: string): Promise<CachedChat | null> {
-  // ...existing logic...
-  
-  const now = Date.now();
-  const isHardExpired = now - result.lastAccessed > CACHE_TTL_MS;
-  const isSoftExpired = now > result.softExpiry;
-  
-  if (isHardExpired) return null; // true miss
-  
-  if (isSoftExpired) {
-    // Serve stale immediately; signal caller to trigger background refresh
-    return { ...result, messages: filteredMessages, __stale: true };
-  }
-  
-  return { ...result, messages: filteredMessages };
-}
-```
+Current implementation: Uses INSERT OR IGNORE on clientId. Duplicate POSTs on network retry do not create duplicate messages.
 
 ---
 
-### 🟡 Medium: `/api/teamspace/channels/route.ts` — No Channel List Caching
+## PARTIAL Issues
 
-**File:** [channels/route.ts](file:///e:/wekraft-saas/src/app/api/teamspace/channels/route.ts#L40-L69)
+### Partial 4: Anonymous Rate-Limit Shared Hot Key (PARTIAL)
+File: src/lib/rate-limit.ts
 
-```ts
-// Lines 40–69 — Full SQL with 3x subquery executed on EVERY request
-const querySql = `
-  SELECT c.*, 
-    (SELECT COUNT(*) FROM ts_messages ...) AS unread_count,
-    (SELECT COUNT(*) FROM ts_notifications ...) AS mention_count
-  FROM ts_channels c WHERE c.project_id = ?
-  ORDER BY ...
-`;
-```
+Original problem: All anonymous users shared the "anonymous" key in Upstash.
 
-**The Problem:**  
-Every component mount and navigation event re-runs this 3-subquery SQL against Turso. In a project with 20 channels and 50 concurrent users, this fires 50+ times per second. When the channel list is "busy" (everyone opening teamspace simultaneously), this creates a thundering herd pattern against the same Turso table.
-
-**Fix — Cache with Upstash + Invalidate on Channel Events:**
-```ts
-import { redis } from "@/lib/redis";
-
-const cacheKey = `channels:${projectId}:${userId}`;
-const cached = await redis.get(cacheKey);
-if (cached) return NextResponse.json({ channels: JSON.parse(cached as string) });
-
-// Run the SQL...
-const result = await turso.execute({ sql: querySql, args: [...] });
-
-// Cache for 30 seconds — short enough to stay fresh, long enough to absorb spikes
-await redis.set(cacheKey, JSON.stringify(result.rows), { ex: 30 });
-```
+Current state (PARTIAL):
+- GOOD: In /api/agent/route.ts (line 44-48), identifier = userId || IP. Anonymous users now get per-IP rate limit keys rather than a shared "anonymous" key.
+- REMAINING: The prefix is still "agent_rl" (generic). For production scale, consider namespacing as "@wekraft/agent" for clarity in Upstash analytics.
+- Also note: chatbotRatelimit and chatbotGlobalRatelimit are separate limiters — correct pattern.
 
 ---
 
-### 🟡 Medium: `convex/notifications.ts` — `deleteOldNotifications` Full Table Scan
+## OPEN Issues — Still Require Fixes
 
-**File:** [notifications.ts](file:///e:/wekraft-saas/convex/notifications.ts#L537-L555)
+### Open 6: getUniqueTags O(n) Reactive Scan (HIGH — OPEN)
+File: convex/workspace.ts, lines 522-542
 
-```ts
-// Lines 543–546 — Unbounded .filter() scan (no index!)
-const oldNotifications = await ctx.db
-  .query("notifications")
-  .filter((q) => q.lt(q.field("createdAt"), cutoff))
-  .collect();
-```
-
-**The Problem:**  
-This runs as a scheduled cron. It performs a **full collection scan** of the notifications table because `.filter()` doesn't use indexes in Convex — only `.withIndex()` does. As notifications accumulate, this cron job will time out and begin retrying, creating a thundering retry storm.
-
-**Fix:**  
-Add a Convex index `by_createdAt` on the notifications table and use `.withIndex()`:
-```ts
-// In schema.ts, add:
-.index("by_created_at", ["createdAt"])
-
-// In notifications.ts:
-const oldNotifications = await ctx.db
-  .query("notifications")
-  .withIndex("by_created_at", (q) => q.lt("createdAt", cutoff))
-  .collect();
-```
-
----
-
-## ❸ Hot Keys — The Shard Overload
-
-> **Condition:** One specific key receives disproportionate traffic, saturating a single node.
-
-### 🔴 Critical: `src/lib/rate-limit.ts` — Single Rate-Limit Key Structure
-
-**File:** [rate-limit.ts](file:///e:/wekraft-saas/src/lib/rate-limit.ts)
-
-```ts
-export const ratelimit = new Ratelimit({
-  redis: Redis.fromEnv(),
-  limiter: Ratelimit.slidingWindow(5, "1 m"),
-  analytics: true,
-  prefix: "agent_rl",
-});
-```
-
-**The Problem:**  
-With `prefix: "agent_rl"`, Upstash generates keys like `agent_rl:<identifier>`. In `/api/agent/route.ts`, when `userId` is missing, the fallback is `request.headers.get("x-forwarded-for") || "anonymous"`. All anonymous users share the key `agent_rl:anonymous` — a single hot key that is hit on every unauthenticated request, saturating one Redis slot.
-
-**Fix — Multiple Prefixes + Ensure Anonymous Has Per-IP Fallback:**
-```ts
-// rate-limit.ts — add tiered limiters
-export const agentRatelimit = new Ratelimit({
-  redis: Redis.fromEnv(),
-  limiter: Ratelimit.slidingWindow(5, "1 m"),
-  analytics: true,
-  prefix: "@wekraft/agent",
-});
-
-// In route.ts, never let "anonymous" be a shared key:
-const identifier = userId 
-  ?? request.headers.get("x-real-ip")
-  ?? request.headers.get("x-forwarded-for")?.split(",")[0].trim()
-  ?? `anon:${Math.random()}`; // last resort, effectively a no-limit
-```
-
----
-
-### 🟠 High: `convex/workspace.ts` — `getUniqueTags` Full Project Scan as Hot Query
-
-**File:** [workspace.ts](file:///e:/wekraft-saas/convex/workspace.ts#L520-L539)
-
-```ts
-// Lines 524–538 — Fetches ALL tasks every time tags are needed
+Current code:
+`	s
 const tasks = await ctx.db
   .query("tasks")
   .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
-  .collect(); // No .take() limit — unbounded!
+  .collect(); // No .take() limit — loads ALL tasks
 
 tasks.forEach((task) => {
   if (task.type) tagsMap.set(task.type.label, task.type);
 });
-```
+`
 
-**The Problem:**  
-`getUniqueTags` is a Convex `query`, meaning it re-runs on every subscription update. It loads **every task in the project** into memory just to extract a small tag set. For active projects with hundreds of tasks, this is an O(n) hot query that fires frequently and wastes bandwidth.
+Problem: This is a Convex query (reactive subscription). It fires on EVERY task update, loading all project tasks into memory just to extract a small tag set. O(n) per reactive update.
 
-**Fix:**  
-Denormalize tags into a separate `projectTags` table and maintain it via `mutation` side effects when tasks are created/updated. The query then becomes O(1).
+Proposed Fix: Denormalize tags into a projectTags table.
 
----
+`	s
+// convex/schema.ts — add:
+projectTags: defineTable({
+  projectId: v.id("projects"),
+  label: v.string(),
+  color: v.string(),
+  updatedAt: v.number(),
+}).index("by_project", ["projectId"]),
 
-### 🟡 Medium: `/api/teamspace/messages/route.ts` — No Message Deduplication / Idempotency
+// On task create/update — upsert the tag
+// On task delete — check if any other task uses the tag; if not, remove it
 
-**File:** [messages/route.ts](file:///e:/wekraft-saas/src/app/api/teamspace/messages/route.ts#L225-L257)
+// getUniqueTags becomes:
+const tags = await ctx.db.query("projectTags")
+  .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
+  .collect(); // O(1) — small number of unique tags
+`
 
-```ts
-const id = clientId || randomUUID(); // Line 225
+### Open 7: Channel List Not Cached (MEDIUM — OPEN)
+File: src/app/api/teamspace/channels/route.ts
 
-// Then immediately INSERT without checking if id exists
-await turso.execute({
-  sql: `INSERT INTO ts_messages (id, ...) VALUES (?, ...)`,
-  args: [id, ...],
-});
-```
+Problem: Every channel sidebar render and navigation event runs a complex 3-subquery SELECT against Turso (channel data + unread_count subquery + mention_count subquery). In a project with 50 concurrent users, this fires 50+ times per second.
 
-**The Problem:**  
-If a client retries a POST (network timeout, double-tap), a second message with a different `randomUUID()` is inserted. There's no idempotency check on `clientId`. Under high concurrency (many users typing simultaneously in a popular channel), this also puts write pressure on a single Turso table without batching.
+Proposed Fix:
+`	s
+import { redis } from "@/lib/redis";
 
-**Fix — Upsert with Client ID:**
-```ts
-await turso.execute({
-  sql: `INSERT OR IGNORE INTO ts_messages (id, ...) VALUES (?, ...)`,
-  args: [id, ...],
-});
-```
+const cacheKey = channels::;
+const cached = await redis.get(cacheKey);
+if (cached) return NextResponse.json({ channels: JSON.parse(cached as string) });
 
----
+// Run SQL...
+const result = await turso.execute({ sql: querySql, args: [...] });
 
-## ⚙️ Additional Critical Production Issues Found
+// Cache for 30 seconds — short enough to stay fresh, long enough to absorb spikes
+await redis.set(cacheKey, JSON.stringify(result.rows), { ex: 30 });
+// Invalidation: call redis.del(channels::) on channel create/update
+`
 
-### 🔴 `src/lib/static-store.tsx` — Hardcoded localhost URL in Production File
+### Open 8: getUserByClerkToken Full Table Scan (MEDIUM — OPEN)
+File: convex/user.ts, lines 133-144
 
-**File:** [static-store.tsx](file:///e:/wekraft-saas/src/lib/static-store.tsx#L292-L293)
+Current code:
+`	s
+// Fallback — loads ALL users into memory
+const all = await ctx.db.query("users").collect();
+const matched = all.find(
+  (u) => u.clerkToken === args.clerkToken || u.clerkToken.endsWith(|),
+);
+`
 
-```ts
-export const INVITE_LINK = "http://localhost:3000/";
-// export const INVITE_LINK = "https://wekraft-saas.vercel.app/";
-```
+Problem: If the exact by_token index lookup fails, every user record is loaded into memory for suffix matching. Will time out as user base grows.
 
-The production URL is **commented out**. Every invite link generated in production points to `localhost:3000`. This will break all invite flows silently.
+Proposed Fix: Enforce that all clerkToken values are stored in their full provider|id format (e.g., oauth_github|user_xyz) on insert. Remove the suffix-matching fallback entirely. The by_token index will always hit.
 
-**Fix:** Use env variable:
-```ts
-export const INVITE_LINK = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000/";
-```
+### Open 9: deleteOldNotifications Unindexed Cron (MEDIUM — OPEN)
+File: convex/notifications.ts, lines 724-742
 
----
+Current code:
+`	s
+const old = await ctx.db
+  .query("notifications")
+  .filter((q) => q.lt(q.field("createdAt"), cutoff)) // Full table scan!
+  .collect();
+`
 
-### 🟡 `src/app/api/agent/route.ts` — ConvexHttpClient Instantiated Per-Module (Not Singleton)
+Problem: .filter() in Convex does NOT use indexes — it performs a full table scan. The notifications table will grow rapidly in production (10 event types per project action). The daily cron will time out.
 
-**File:** [route.ts](file:///e:/wekraft-saas/src/app/api/agent/route.ts#L7)
+Proposed Fix:
+`	s
+// In convex/schema.ts — notifications table already has:
+// .index("by_recipient", ["recipientId", "createdAt"])
+// Add a dedicated cleanup index:
+.index("by_created_at", ["createdAt"])
 
-```ts
-const convex = new ConvexHttpClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
-```
-
-In Next.js serverless, each invocation may create a new client. This is fine for Convex HTTP clients (stateless), but the same pattern in [messages/route.ts](file:///e:/wekraft-saas/src/app/api/teamspace/messages/route.ts#L14) creates both `convex` and `ably` as module-level singletons — **this is actually correct**. Keep the pattern consistent.
-
----
-
-### 🟡 `convex/crons.ts` — Need to Verify Cron Frequency
-
-**File:** [crons.ts](file:///e:/wekraft-saas/convex/crons.ts) — check that `deleteOldNotifications` isn't set to run too frequently, as the full-table scan noted above will compete with live queries.
-
----
-
-## 📊 Priority Summary
-
-| # | Issue | File | Severity | Pattern |
-|---|---|---|---|---|
-| 1 | Ghost userId probing + Pro bypass bug | `api/agent/route.ts` | 🔴 Critical | Penetration + Logic Bug |
-| 2 | `localhost` invite link in production | `lib/static-store.tsx` | 🔴 Critical | Config |
-| 3 | IndexedDB hard TTL → tab stampede | `lib/db.ts` | 🔴 Critical | Thundering Herd |
-| 4 | `anonymous` rate-limit hot key | `lib/rate-limit.ts` | 🔴 High | Hot Key |
-| 5 | `initTeamspaceDB()` migration storm | `lib/turso/schema.ts` | 🟠 High | Thundering Herd |
-| 6 | `getUniqueTags` unbounded task scan | `convex/workspace.ts` | 🟠 High | Hot Key |
-| 7 | Channel list has no caching | `api/teamspace/channels/route.ts` | 🟡 Medium | Thundering Herd |
-| 8 | `getUserByClerkToken` full table scan | `convex/user.ts` | 🟡 Medium | Penetration |
-| 9 | `deleteOldNotifications` no-index cron | `convex/notifications.ts` | 🟡 Medium | Thundering Herd |
-| 10 | POST messages not idempotent | `api/teamspace/messages/route.ts` | 🟡 Medium | Hot Write |
+// In convex/notifications.ts:
+const old = await ctx.db
+  .query("notifications")
+  .withIndex("by_created_at", (q) => q.lt("createdAt", cutoff))
+  .collect();
+`
 
 ---
 
-## 🛠 Recommended Implementation Order
+## Turso Schema — Current Table Inventory
 
-1. **Fix the `localhost` invite link** — 1 line change, zero risk, immediate production impact
-2. **Fix the Pro bypass logic bug** in `/api/agent/route.ts` — security fix
-3. **Add null-value caching** to the agent user lookup (Redis `set` with 60s TTL)
-4. **Fix `initTeamspaceDB()`** — move the guard to the top
-5. **Add `INSERT OR IGNORE`** to message inserts
-6. **Fix anonymous rate-limit key** to be per-IP
-7. **Add soft-expiry** to `db.ts` IndexedDB TTL
-8. **Add channel list caching** with 30s Redis TTL
-9. **Add `by_created_at` index** for notification cleanup cron
-10. **Denormalize project tags** into their own table
+| Table | Purpose | Indexes |
+|---|---|---|
+| ts_channels | Chat channels per project | idx_channels_project |
+| ts_messages | All chat messages | idx_messages_channel, idx_messages_thread, idx_messages_expires |
+| ts_messages_fts | Full-text search virtual table (porter tokenizer) | fts5 index |
+| ts_reactions | Emoji reactions on messages | UNIQUE(message_id, user_id, emoji) |
+| ts_poll_votes | Poll option votes | UNIQUE(message_id, option_id, user_id) |
+| ts_notifications | Teamspace @mention notifications | idx_notifications_user |
+| ts_settings | Per-project teamspace settings | PRIMARY KEY project_id |
+| ts_channel_reads | Per-user per-channel last read timestamp | PRIMARY KEY (user_id, channel_id) |
+| ts_private_channel_members | Private channel access control | idx_pcm_channel, idx_pcm_user |
+
+Key schema features:
+- ON DELETE CASCADE on all FOREIGN KEY references to ts_channels(id) and ts_messages(id).
+- expires_at column on ts_messages enables Turso native row expiry (PRAGMA turso_enable_expiry = ON).
+- made_public_at column on ts_channels tracks privacy conversion timestamp for pre-conversion message hiding.
+- ts_messages_fts maintained by 3 triggers: AFTER INSERT, AFTER DELETE, AFTER UPDATE.
+
+---
+
+## Recommended Fix Priority (Remaining Open Issues)
+
+1. Add by_created_at index to notifications table — 2 lines in schema.ts, eliminates cron timeout risk.
+2. Remove getUserByClerkToken suffix fallback — enforce strict token format, eliminate O(n) user scan.
+3. Add 30-second Redis cache to channel list route — eliminates repeated 3x SQL subquery pattern.
+4. Denormalize project tags into projectTags table — eliminates O(n) reactive subscription on every task update.
